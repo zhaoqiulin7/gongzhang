@@ -267,7 +267,10 @@ h2.section { font-size: var(--g-fs-lg); margin: var(--g-sp-1) 0 12px; color: var
 }
 @keyframes slideup { from { transform: translateY(30px); opacity: .6; } to { transform: translateY(0); opacity: 1; } }
 .modal h3 { margin: 0 0 14px; font-size: var(--g-fs-lg); }
-.modal-actions { display: flex; gap: 10px; margin-top: var(--g-sp-4); }
+.modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: var(--g-sp-4); }
+/* v2.2.0：按钮数较多时（如对账单的「对账完成/分享/复制/关闭」）自动换行，
+   配合 .btn 的 white-space:nowrap，避免按钮被挤出屏幕右侧被裁切 */
+.modal-actions .btn { flex: 1 1 auto; width: auto; min-width: 118px; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--c-tab-h) + 80px); transform: translateX(-50%) translateY(20px);
@@ -2265,6 +2268,73 @@ async function reconView() {
   });
   wrap.appendChild(chips);
 
+  // v2.2.0：账龄分析——未结清往来（payStatus=未付）按「最近一次往来到今天」的挂账时长分档
+  if (state.reconStatus === 'all' || state.reconStatus === 'unpaid') {
+    const todayS = fmtDate(new Date().toISOString());
+    const daysSince = (d) => {
+      d = fmtDate(d); if (!d) return 0;
+      const n = Math.round((new Date(todayS) - new Date(d)) / 86400000);
+      return n > 0 ? n : 0;
+    };
+    const BUCKETS = [
+      { label: '30 天内', cls: 'paid', test: (d) => d <= 30 },
+      { label: '31-60 天', cls: 'ongoing', test: (d) => d > 30 && d <= 60 },
+      { label: '61-90 天', cls: 'finished', test: (d) => d > 60 && d <= 90 },
+      { label: '90 天以上', cls: 'unpaid', test: (d) => d > 90 }
+    ];
+    const openRows = parties.map((p) => {
+      const st = partyStatsSync(txs, p.id);
+      const rel = txs.filter((t) => t.partyId === p.id);
+      let last = '';
+      rel.forEach((t) => { const d = fmtDate(t.date); if (d && d > last) last = d; });
+      const net = st.incomeTotal - st.expenseTotal; // >0 对方应付我；<0 我应付对方
+      return { p, st, net, last, days: daysSince(last), count: rel.length };
+    }).filter((x) => (x.p.payStatus || 'unpaid') === 'unpaid' && x.count > 0)
+      .sort((a, b) => b.days - a.days);
+
+    wrap.appendChild(h('h2', { class: 'section' }, '账龄分析'));
+    const ageCard = h('div', { class: 'card' });
+    if (!openRows.length) {
+      ageCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '当前没有未结清的往来，账目干净 👍'));
+    } else {
+      const sums = BUCKETS.map((b) => ({
+        b, n: 0, amt: 0,
+        fill: openRows.filter((x) => b.test(x.days))
+      }));
+      sums.forEach((s) => s.fill.forEach((x) => { s.n++; s.amt += Math.abs(x.net); }));
+      let payTotal = 0, recvTotal = 0;
+      openRows.forEach((x) => { if (x.net < 0) payTotal += -x.net; else recvTotal += x.net; });
+      ageCard.appendChild(h('div', { class: 'row-between' }, [
+        h('span', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '未结清 ' + openRows.length + ' 家'),
+        h('span', { style: 'font-size:var(--g-fs-md)' }, [
+          h('span', { style: 'color:var(--expense);font-weight:700' }, '我应付 ' + M(payTotal)),
+          h('span', { class: 'muted' }, ' ｜ '),
+          h('span', { style: 'color:var(--income);font-weight:700' }, '我应收 ' + M(recvTotal))
+        ])
+      ]));
+      const grid = h('div', { class: 'stat-grid', style: 'margin-top:10px;margin-bottom:0' });
+      sums.forEach((s) => grid.appendChild(stat(s.b.label, M(s.amt), s.n ? (s.b.cls === 'unpaid' ? 'expense' : '') : '')));
+      ageCard.appendChild(grid);
+      ageCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '挂账时长按该单位最近一次往来日期起算；已标记「已付/已对账」的单位不计入。'));
+      openRows.slice(0, 10).forEach((x) => {
+        const bk = BUCKETS.find((b) => b.test(x.days)) || BUCKETS[0];
+        ageCard.appendChild(h('div', { class: 'tr-row', style: 'border-top:1px solid var(--border)', onclick: () => partyStatement(x.p, txs, projects) }, [
+          h('div', { style: 'flex:1;min-width:0' }, [
+            h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, x.p.name),
+            h('div', { class: 'meta' }, partyTypeLabel(x.p.type) + ' · ' + x.count + ' 笔 · 最近往来 ' + (x.last || '—') + ' · 挂账 ' + x.days + ' 天')
+          ]),
+          h('div', { class: 'tr-r' }, [
+            h('div', { class: 'amt ' + (x.net < 0 ? 'expense' : 'income') }, (x.net < 0 ? '应付 ' : '应收 ') + M(Math.abs(x.net))),
+            h('span', { class: 'tag ' + bk.cls, style: 'margin-top:4px' }, bk.label)
+          ]),
+          h('span', { class: 'chev' }, '›')
+        ]));
+      });
+      if (openRows.length > 10) ageCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '仅显示挂账最久的 10 家'));
+    }
+    wrap.appendChild(ageCard);
+  }
+
   let rows = parties.map((p) => ({ p, st: partyStatsSync(txs, p.id) }));
   if (state.reconStatus && state.reconStatus !== 'all') rows = rows.filter(({ p }) => (p.payStatus || 'unpaid') === state.reconStatus);
   rows.sort((a, b) => b.st.total - a.st.total);
@@ -2498,7 +2568,63 @@ function partyStatement(p, allTxs, allProjects) {
       h('div', { class: 'amt ' + (isIn ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIn ? '+' : (isTr ? '↔' : '-')) + M(t.amount))
     ]));
   });
-  const acts = [h('button', { class: 'btn ghost', onclick: () => closeModal() }, '关闭')];
+  // v2.2.0：生成对账单纯文本（可直接发微信催款/核对）；金额沿用 M() 以尊重「隐藏金额」设置
+  const buildStatementText = () => {
+    const L = [];
+    L.push('【往来对账单】' + (p.name || ''));
+    L.push('单位类型：' + partyTypeLabel(p.type) + (p.phone ? ' · ' + p.phone : ''));
+    L.push('对账状态：' + ((PAY_STATUS[p.payStatus] || PAY_STATUS.unpaid).label || '未付'));
+    L.push('生成时间：' + fmtDateTime(today(), nowHm()));
+    L.push('———————————');
+    let inc = 0, exp = 0;
+    rel.forEach((t) => { const a = Number(t.amount) || 0; if (isIncome(t)) inc += a; else if (isExpense(t)) exp += a; });
+    L.push('我方已收：' + M(inc));
+    L.push('我方已付：' + M(exp));
+    const net = inc - exp;
+    L.push('净往来：' + (net >= 0 ? '对方应付我 ' + M(net) : '我应付对方 ' + M(-net)));
+    L.push('———————————');
+    L.push('流水明细（' + rel.length + ' 笔）：');
+    rel.slice().sort((a, b) => fmtDate(a.date).localeCompare(fmtDate(b.date))).forEach((t, i) => {
+      const isIn = isIncome(t), isTr = isTransfer(t);
+      const title = isTr ? '转账' : (isIn ? (t.subType || '收入') : ((t.category || '') + (t.subCat ? '·' + t.subCat : '')));
+      L.push((i + 1) + '. ' + fmtDate(t.date) + ' ' + (isIn ? '收' : isTr ? '转' : '付') + ' ' + title
+        + ' ' + (isIn ? '+' : isTr ? '↔' : '-') + M(Number(t.amount) || 0)
+        + (t.note ? '（' + t.note + '）' : ''));
+    });
+    L.push('———————————');
+    L.push('如核对无误请回复确认，谢谢！');
+    return L.join('\n');
+  };
+  const copyStatement = async () => {
+    const txt = buildStatementText();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(txt);
+        toast('对账单已复制，可直接粘贴到微信');
+        return;
+      }
+    } catch (e) { /* 降级到 execCommand */ }
+    const ta = document.createElement('textarea');
+    ta.value = txt; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('对账单已复制'); }
+    catch (e2) { toast('复制失败，请长按选择文本'); }
+    ta.remove();
+  };
+  const shareStatement = async () => {
+    const txt = buildStatementText();
+    if (navigator.share) {
+      try { await navigator.share({ title: '往来对账单 · ' + (p.name || ''), text: txt }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; } // 用户取消分享
+    }
+    await copyStatement();
+  };
+
+  const acts = [
+    h('button', { class: 'btn ghost', onclick: () => shareStatement() }, '📤 分享'),
+    h('button', { class: 'btn ghost', onclick: () => copyStatement() }, '📋 复制对账单'),
+    h('button', { class: 'btn ghost', onclick: () => closeModal() }, '关闭')
+  ];
   if (p.payStatus !== 'reconciled') {
     acts.unshift(h('button', { class: 'btn primary', onclick: () => {
       confirmDialog('确认与「' + p.name + '」的账目已核对无误？确认后付款状态将标记为「已对账」。', () => {

@@ -255,7 +255,10 @@ h2.section { font-size: var(--g-fs-lg); margin: var(--g-sp-1) 0 12px; color: var
 }
 @keyframes slideup { from { transform: translateY(30px); opacity: .6; } to { transform: translateY(0); opacity: 1; } }
 .modal h3 { margin: 0 0 14px; font-size: var(--g-fs-lg); }
-.modal-actions { display: flex; gap: 10px; margin-top: var(--g-sp-4); }
+.modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: var(--g-sp-4); }
+/* v2.2.0：按钮数较多时（如对账单的「对账完成/分享/复制/关闭」）自动换行，
+   配合 .btn 的 white-space:nowrap，避免按钮被挤出屏幕右侧被裁切 */
+.modal-actions .btn { flex: 1 1 auto; width: auto; min-width: 118px; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--c-tab-h) + 80px); transform: translateX(-50%) translateY(20px);
