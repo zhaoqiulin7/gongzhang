@@ -115,6 +115,7 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 .tag.ongoing { background: rgba(46,145,110,.18); color: var(--primary-light); }
 .tag.finished { background: rgba(255,206,84,.16); color: var(--accent); }
 .tag.settled { background: rgba(224,101,79,.18); color: var(--danger); }
+.tag.stage { background: rgba(47,129,247,.16); color: #6aa9ff; margin-left: 0; }
 
 .tx { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .tx:last-child { border-bottom: none; }

@@ -4,7 +4,7 @@ import {
   fmtMoney, fmtDate, today, escapeHtml, h, toast, openModal, closeModal, confirmDialog, setPageTitle
 } from './util.js';
 
-const state = { projectId: null };
+const state = { projectId: null, homeSort: 'start', homeStage: 'all', partiesSort: 'type' };
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
 const DEFAULT_STAGES = [
@@ -13,14 +13,44 @@ const DEFAULT_STAGES = [
 ];
 
 // ---------- 计算 ----------
+function isIncome(t) { return t.type === 'income' || t.kind === 'income'; }
+function isExpense(t) { return t.type === 'expense' || t.kind === 'expense'; }
+
 async function projStats(pid) {
   const txs = await Transactions.byProject(pid);
   let income = 0, expense = 0;
-  txs.forEach((t) => {
-    if (t.type === 'income') income += Number(t.amount) || 0;
-    else expense += Number(t.amount) || 0;
-  });
+  txs.forEach((t) => { if (isIncome(t)) income += Number(t.amount) || 0; else expense += Number(t.amount) || 0; });
   return { income, expense, profit: income - expense, count: txs.length };
+}
+
+// 同步统计某项目收支（用已加载的 txs，避免逐个异步）
+function quickStats(txs, pid) {
+  let income = 0, expense = 0;
+  txs.filter((t) => t.projectId === pid).forEach((t) => {
+    if (isIncome(t)) income += Number(t.amount) || 0; else expense += Number(t.amount) || 0;
+  });
+  return { income, expense, profit: income - expense };
+}
+
+// 当前所处施工阶段（用于看板分组）
+function currentStageName(p) {
+  const stages = p.stages || [];
+  if (!stages.length) return '';
+  const doneIdx = [];
+  stages.forEach((s, i) => { if (s.done) doneIdx.push(i); });
+  if (doneIdx.length === 0) return stages[0].name;
+  const last = Math.max.apply(null, doneIdx);
+  if (last >= stages.length - 1) return stages[last].name + '（已完成）';
+  return stages[last + 1].name;
+}
+
+// 收集所有项目出现过的阶段名（去重，保持出现顺序）
+function collectStageNames(projects) {
+  const seen = {}, out = [];
+  projects.forEach((p) => (p.stages || []).forEach((s) => {
+    if (!seen[s.name]) { seen[s.name] = 1; out.push(s.name); }
+  }));
+  return out;
 }
 
 async function attURL(id) {
@@ -66,28 +96,71 @@ function setupFab(route, pid) {
 // ---------- 首页 ----------
 async function homeView() {
   setPageTitle('装修记账');
-  const [projects, txs] = await Promise.all([Projects.all(), Transactions.all()]);
+  const [projects, txs, rems] = await Promise.all([Projects.all(), Transactions.all(), Reminders.all()]);
   let income = 0, expense = 0;
-  txs.forEach((t) => { if (t.type === 'income') income += Number(t.amount) || 0; else expense += Number(t.amount) || 0; });
+  txs.forEach((t) => { if (isIncome(t)) income += Number(t.amount) || 0; else expense += Number(t.amount) || 0; });
+  let recvDue = 0, payDue = 0;
+  rems.filter((r) => !r.done).forEach((r) => {
+    if (r.kind === 'receive') recvDue += Number(r.amount) || 0; else payDue += Number(r.amount) || 0;
+  });
 
   const wrap = h('div');
   wrap.appendChild(h('h2', { class: 'section' }, '总览（累计）'));
-  const grid = h('div', { class: 'stat-grid' }, [
+  wrap.appendChild(h('div', { class: 'stat-grid' }, [
     stat('总收入', fmtMoney(income), 'income'),
     stat('总支出', fmtMoney(expense), 'expense'),
     stat('总利润', fmtMoney(income - expense), 'profit'),
-    stat('项目数', String(projects.length), '')
-  ]);
-  wrap.appendChild(grid);
+    stat('项目数', String(projects.length), ''),
+    stat('待收', fmtMoney(recvDue), 'income'),
+    stat('待付', fmtMoney(payDue), 'expense')
+  ]));
 
-  wrap.appendChild(h('h2', { class: 'section' }, '我的项目'));
-  if (!projects.length) {
-    wrap.appendChild(emptyState('还没有项目', '点右下角 + 新建第一个装修项目'));
+  // 项目进度看板：排序 + 按施工阶段筛选
+  wrap.appendChild(h('h2', { class: 'section' }, '项目进度看板'));
+
+  const sortOpts = [['start', '开工时间'], ['end', '竣工时间'], ['contract', '合同额'], ['profit', '利润']];
+  const sortSeg = h('div', { class: 'seg', style: 'margin-bottom:10px' });
+  sortOpts.forEach(([v, label]) => {
+    sortSeg.appendChild(h('button', { class: state.homeSort === v ? 'on' : '', onclick: () => { state.homeSort = v; render(); } }, label));
+  });
+
+  const stageNames = collectStageNames(projects);
+  const chips = h('div', { class: 'chips', style: 'margin-bottom:12px' });
+  const mkChip = (val, label, extra) => h('button', { class: 'chip' + (state.homeStage === val ? ' on' : ''), onclick: () => { state.homeStage = val; render(); } }, label + (extra ? '（' + extra + '）' : ''));
+  chips.appendChild(mkChip('all', '全部', projects.length));
+  stageNames.forEach((name) => {
+    const cnt = projects.filter((p) => currentStageName(p) === name).length;
+    if (cnt > 0) chips.appendChild(mkChip(name, name, cnt));
+  });
+  const noStage = projects.filter((p) => !(p.stages || []).length).length;
+  if (noStage > 0) chips.appendChild(mkChip('none', '未排期', noStage));
+  wrap.appendChild(sortSeg);
+  wrap.appendChild(chips);
+
+  // 过滤 + 排序
+  let list = projects.slice();
+  if (state.homeStage === 'none') list = list.filter((p) => !(p.stages || []).length);
+  else if (state.homeStage !== 'all') list = list.filter((p) => currentStageName(p) === state.homeStage);
+
+  const withStats = list.map((p) => ({ p, s: quickStats(txs, p.id) }));
+  const keyFn = {
+    start: (o) => o.p.startDate || '9999',
+    end: (o) => o.p.endDate || '9999',
+    contract: (o) => -(Number(o.p.contractAmount) || 0),
+    profit: (o) => -o.s.profit
+  }[state.homeSort];
+  withStats.sort((a, b) => {
+    const ka = keyFn(a), kb = keyFn(b);
+    return typeof ka === 'string' ? ka.localeCompare(kb) : ka - kb;
+  });
+
+  if (!withStats.length) {
+    wrap.appendChild(emptyState('没有符合条件的项目', '调整筛选或点右下角 + 新建'));
   } else {
-    projects.forEach((p) => {
-      const s = stat; // placeholder
-      wrap.appendChild(projectCard(p));
-    });
+    const sum = withStats.reduce((acc, o) => { acc.i += o.s.income; acc.e += o.s.expense; return acc; }, { i: 0, e: 0 });
+    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-2px 0 10px' },
+      '当前筛选合计：收 ' + fmtMoney(sum.i) + ' · 支 ' + fmtMoney(sum.e) + ' · 利润 ' + fmtMoney(sum.i - sum.e)));
+    withStats.forEach(({ p, s }) => wrap.appendChild(projectCard(p, s)));
   }
   return wrap;
 }
@@ -107,48 +180,48 @@ function emptyState(title, sub) {
   ]);
 }
 
-function projectCard(p) {
+function projectCard(p, stats) {
+  const st = stats || { income: 0, expense: 0, profit: 0 };
   const card = h('div', { class: 'card tap', onclick: () => { location.hash = '#/project/' + p.id; } });
-  const head = h('div', { class: 'row-between' }, [
+  card.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'font-weight:700;font-size:16px' }, [
       document.createTextNode(p.name || '未命名项目'),
       h('span', { class: 'tag ' + (STATUS_MAP[p.status] || {}).cls }, (STATUS_MAP[p.status] || {}).label || '进行中')
     ]),
     h('div', { class: 'muted', style: 'font-size:12px' }, p.clientName || '')
-  ]);
-  card.appendChild(head);
+  ]));
 
-  const body = h('div', { style: 'margin-top:10px;display:flex;gap:14px;flex-wrap:wrap' });
-  const s = (p.contractAmount ? '合同 ' + fmtMoney(p.contractAmount) : '合同 —');
-  body.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, s));
+  const stageName = currentStageName(p);
+  card.appendChild(h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center' }, [
+    h('span', { class: 'tag stage' }, stageName || '未排期'),
+    h('span', { class: 'muted', style: 'font-size:12px' }, '开工 ' + (p.startDate ? fmtDate(p.startDate) : '—'))
+  ]));
+
+  const body = h('div', { style: 'margin-top:8px;display:flex;gap:14px;flex-wrap:wrap' });
+  body.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, p.contractAmount ? '合同 ' + fmtMoney(p.contractAmount) : '合同 —'));
   card.appendChild(body);
 
-  // 异步填利润
-  projStats(p.id).then((st) => {
-    const row = h('div', { class: 'row-between', style: 'margin-top:10px' }, [
-      h('div', { class: 'muted', style: 'font-size:12px' }, '收 ' + fmtMoney(st.income) + ' · 支 ' + fmtMoney(st.expense)),
-      h('div', { style: 'font-weight:700;color:var(--accent)' }, '利润 ' + fmtMoney(st.profit))
-    ]);
-    card.appendChild(row);
-  });
+  card.appendChild(h('div', { class: 'row-between', style: 'margin-top:10px' }, [
+    h('div', { class: 'muted', style: 'font-size:12px' }, '收 ' + fmtMoney(st.income) + ' · 支 ' + fmtMoney(st.expense)),
+    h('div', { style: 'font-weight:700;color:var(--accent)' }, '利润 ' + fmtMoney(st.profit))
+  ]));
 
-  const quick = h('div', { style: 'display:flex;gap:8px;margin-top:12px' }, [
+  card.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:12px' }, [
     h('button', { class: 'btn sm primary', onclick: (e) => { e.stopPropagation(); txForm('income', p.id); } }, '记收款'),
     h('button', { class: 'btn sm', style: 'background:var(--expense);color:#fff', onclick: (e) => { e.stopPropagation(); txForm('expense', p.id); } }, '记支出'),
     h('button', { class: 'btn sm ghost', onclick: (e) => { e.stopPropagation(); location.hash = '#/project/' + p.id; } }, '详情')
-  ]);
-  card.appendChild(quick);
+  ]));
   return card;
 }
 
 // ---------- 项目列表 ----------
 async function projectsView() {
   setPageTitle('项目管理');
-  const projects = await Projects.all();
+  const [projects, txs] = await Promise.all([Projects.all(), Transactions.all()]);
   const wrap = h('div');
   wrap.appendChild(h('h2', { class: 'section' }, '全部项目（' + projects.length + '）'));
   if (!projects.length) wrap.appendChild(emptyState('还没有项目', '点右下角 + 新建'));
-  else projects.forEach((p) => wrap.appendChild(projectCard(p)));
+  else projects.forEach((p) => wrap.appendChild(projectCard(p, quickStats(txs, p.id))));
   return wrap;
 }
 
@@ -304,25 +377,62 @@ async function projectDetailView(id) {
 // ---------- 往来单位 ----------
 async function partiesView() {
   setPageTitle('往来单位');
-  const parties = await Parties.all();
+  const [parties, txs] = await Promise.all([Parties.all(), Transactions.all()]);
   const wrap = h('div');
-  wrap.appendChild(h('h2', { class: 'section' }, '客户 / 供应商 / 工人'));
-  if (!parties.length) wrap.appendChild(emptyState('还没有往来单位', '记账时可快速选用'));
-  else parties.forEach((p) => {
-    const typeLabel = (PARTY_TYPES.find((x) => x.v === p.type) || {}).label || '其他';
-    wrap.appendChild(h('div', { class: 'list-item' }, [
-      h('div', {}, [
-        h('div', { style: 'font-weight:600' }, p.name),
-        h('div', { class: 'sub' }, typeLabel + (p.phone ? ' · ' + p.phone : ''))
-      ]),
-      h('div', { style: 'display:flex;gap:4px;align-items:center' }, [
-        h('span', { class: 'tag ' + ((PAY_STATUS[p.payStatus]) || PAY_STATUS.unpaid).cls }, ((PAY_STATUS[p.payStatus]) || PAY_STATUS.unpaid).label),
-        h('button', { class: 'btn sm ghost', onclick: () => partyForm(p) }, '编辑'),
-        h('button', { class: 'delete-x', onclick: () => confirmDialog('删除该往来单位？', () => { Parties.remove(p.id).then(render); }) }, '×')
-      ])
-    ]));
+  wrap.appendChild(h('h2', { class: 'section' }, '客户 / 供应商 / 工人（' + parties.length + '）'));
+
+  const sortSeg = h('div', { class: 'seg', style: 'margin-bottom:12px' });
+  [['type', '类型'], ['amount', '按金额'], ['freq', '按常用']].forEach(([v, label]) => {
+    sortSeg.appendChild(h('button', { class: state.partiesSort === v ? 'on' : '', onclick: () => { state.partiesSort = v; render(); } }, label));
   });
+  wrap.appendChild(sortSeg);
+
+  const enriched = parties.map((p) => ({ p, st: partyStatsSync(txs, p.id) }));
+  if (state.partiesSort === 'amount') enriched.sort((a, b) => b.st.total - a.st.total);
+  else if (state.partiesSort === 'freq') enriched.sort((a, b) => b.st.count - a.st.count);
+
+  if (!enriched.length) wrap.appendChild(emptyState('还没有往来单位', '记账时可快速选用'));
+  else enriched.forEach(({ p, st }) => wrap.appendChild(partyCard(p, st)));
   return wrap;
+}
+
+function partyStatsSync(txs, pid) {
+  const rel = txs.filter((t) => t.partyId === pid);
+  const byCat = {};
+  let expenseTotal = 0, incomeTotal = 0;
+  rel.forEach((t) => {
+    const amt = Number(t.amount) || 0;
+    if (isExpense(t)) { const c = t.category || '其他'; byCat[c] = (byCat[c] || 0) + amt; expenseTotal += amt; }
+    else incomeTotal += amt;
+  });
+  return { count: rel.length, byCat, expenseTotal, incomeTotal, total: expenseTotal + incomeTotal };
+}
+
+function partyCard(p, st) {
+  const typeLabel = (PARTY_TYPES.find((x) => x.v === p.type) || {}).label || '其他';
+  const status = (PAY_STATUS[p.payStatus] || PAY_STATUS.unpaid);
+  const card = h('div', { class: 'card' });
+  card.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'font-weight:700;font-size:15px' }, p.name),
+    h('span', { class: 'tag ' + (status.cls || 'unpaid') }, status.label || '未付')
+  ]));
+  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, typeLabel + (p.phone ? ' · ' + p.phone : '')));
+
+  if (st.expenseTotal > 0) {
+    const parts = Object.keys(st.byCat).map((c) => c + ' ' + fmtMoney(st.byCat[c]));
+    card.appendChild(h('div', { class: 'sub', style: 'margin-top:6px' }, '已付（分类）：' + parts.join(' · ')));
+    card.appendChild(h('div', { class: 'sub' }, '已付合计：' + fmtMoney(st.expenseTotal)));
+  } else if (st.incomeTotal > 0) {
+    card.appendChild(h('div', { class: 'sub', style: 'margin-top:6px' }, '已收合计：' + fmtMoney(st.incomeTotal)));
+  }
+
+  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, '往来笔数：' + st.count + ' 笔'));
+
+  card.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:10px' }, [
+    h('button', { class: 'btn sm ghost', onclick: () => partyForm(p) }, '编辑'),
+    h('button', { class: 'delete-x', onclick: () => confirmDialog('删除该往来单位？', () => { Parties.remove(p.id).then(render); }) }, '×')
+  ]));
+  return card;
 }
 
 // ---------- 设置 ----------
