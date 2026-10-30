@@ -16,6 +16,13 @@ export const STATUS_MAP = {
   settled: { label: '已结算', cls: 'settled' }
 };
 
+// 往来单位付款状态：未付 / 已付 / 已对账
+export const PAY_STATUS = {
+  unpaid: { label: '未付', cls: 'unpaid' },
+  paid: { label: '已付', cls: 'paid' },
+  reconciled: { label: '已对账', cls: 'reconciled' }
+};
+
 export function fmtMoney(n) {
   const num = Number(n) || 0;
   const abs = Math.abs(num).toFixed(2);

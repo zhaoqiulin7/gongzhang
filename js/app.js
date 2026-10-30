@@ -224,6 +224,34 @@ async function projectDetailView(id) {
   ]);
   wrap.appendChild(profitCard);
 
+  // 预算内计划付款（控支预警）
+  const planCard = h('div', { class: 'card' });
+  const pItems = p.planItems || [];
+  planCard.appendChild(h('div', { style: 'font-weight:700' }, '预算内计划付款（控支预警）'));
+  if (!pItems.length) {
+    planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别，点项目「编辑」添加，或用「从表格导入」批量填入'));
+  } else {
+    const allTx = await Transactions.byProject(id);
+    pItems.forEach((it) => {
+      const spent = allTx.filter((t) => t.type === 'expense' && t.planCat === it.id)
+        .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      const plan = Number(it.amount) || 0;
+      const left = plan - spent;
+      const pct = plan > 0 ? Math.min(100, Math.round((spent / plan) * 100)) : 0;
+      const over = spent > plan;
+      planCard.appendChild(h('div', { style: 'margin-top:10px' }, [
+        h('div', { class: 'row-between' }, [
+          h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'),
+          h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + fmtMoney(plan) + ' · 已用 ' + fmtMoney(spent) + (over ? ' · 超支 ' + fmtMoney(spent - plan) : (left >= 0 ? ' · 余 ' + fmtMoney(left) : '')))
+        ]),
+        h('div', { class: 'bar', style: 'margin-top:5px' }, [
+          h('div', { class: 'bar-fill' + (over ? ' over' : ''), style: 'width:' + pct + '%' })
+        ])
+      ]));
+    });
+  }
+  wrap.appendChild(planCard);
+
   // 收付款节点（提醒数据，P2 才弹通知）
   const rems = await Reminders.byProject(id);
   const remCard = h('div', { class: 'card' });
@@ -287,7 +315,8 @@ async function partiesView() {
         h('div', { style: 'font-weight:600' }, p.name),
         h('div', { class: 'sub' }, typeLabel + (p.phone ? ' · ' + p.phone : ''))
       ]),
-      h('div', { style: 'display:flex;gap:4px' }, [
+      h('div', { style: 'display:flex;gap:4px;align-items:center' }, [
+        h('span', { class: 'tag ' + ((PAY_STATUS[p.payStatus]) || PAY_STATUS.unpaid).cls }, ((PAY_STATUS[p.payStatus]) || PAY_STATUS.unpaid).label),
         h('button', { class: 'btn sm ghost', onclick: () => partyForm(p) }, '编辑'),
         h('button', { class: 'delete-x', onclick: () => confirmDialog('删除该往来单位？', () => { Parties.remove(p.id).then(render); }) }, '×')
       ])
@@ -413,6 +442,43 @@ function projectForm(existing) {
   stageBox.appendChild(stageBtns);
   f.appendChild(stageBox);
 
+  // 预算内计划付款类别（自定义类别+金额，可导入表格批量填入）
+  const planItems = (p.planItems && p.planItems.length)
+    ? p.planItems.map((x) => ({ id: x.id || uid(), cat: x.cat || '', amount: Number(x.amount) || 0 }))
+    : [];
+  const planBox = h('div', { class: 'field' }, [h('label', {}, '预算内计划付款类别')]);
+  const planList = h('div', { style: 'margin-top:6px' });
+  planBox.appendChild(planList);
+  const fileInp = h('input', { type: 'file', accept: '.csv,text/csv', style: 'display:none' });
+  fileInp.addEventListener('change', (e) => {
+    const fl = e.target.files[0];
+    if (!fl) return;
+    importPlanCsv(fl, planItems).then((n) => { toast('已导入 ' + n + ' 条计划'); renderPlan(); })
+      .catch(() => toast('导入失败，请检查表格格式'));
+  });
+  f.appendChild(fileInp);
+  const planTools = h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px' }, [
+    h('button', { class: 'btn sm ghost', onclick: () => downloadPlanTemplate() }, '下载导入模板'),
+    h('button', { class: 'btn sm ghost', onclick: () => fileInp.click() }, '从表格导入')
+  ]);
+  planBox.appendChild(planTools);
+  function renderPlan() {
+    planList.innerHTML = '';
+    planItems.forEach((x, i) => {
+      const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+      const nm = h('input', { value: x.cat || '', placeholder: '类别（如：泥瓦人工/瓷砖主材）', style: 'flex:1;min-width:0' });
+      nm.addEventListener('input', () => { x.cat = nm.value; });
+      const amt = h('input', { type: 'number', inputmode: 'decimal', value: x.amount || '', placeholder: '计划金额', style: 'width:120px' });
+      amt.addEventListener('input', () => { x.amount = Number(amt.value) || 0; });
+      const del = h('button', { class: 'delete-x', onclick: () => { planItems.splice(i, 1); renderPlan(); } }, '×');
+      row.appendChild(nm); row.appendChild(amt); row.appendChild(del);
+      planList.appendChild(row);
+    });
+  }
+  renderPlan();
+  planBox.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:8px', onclick: () => { planItems.push({ id: uid(), cat: '', amount: 0 }); renderPlan(); } }, '+ 添加类别'));
+  f.appendChild(planBox);
+
   const save = h('button', { class: 'btn primary', onclick: () => {
     p.name = name.value.trim();
     p.clientName = clientName.value.trim();
@@ -429,6 +495,7 @@ function projectForm(existing) {
     p.endDate = endD.value;
     p.note = f.querySelector('textarea').value.trim();
     p.stages = stages;
+    p.planItems = planItems;
     Projects.save(p).then(() => { closeModal(); toast(isEdit ? '已更新' : '已新建'); render(); });
   } }, isEdit ? '保存修改' : '创建项目');
   const cancel = h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消');
@@ -480,6 +547,22 @@ async function txForm(presetType, presetProject) {
       field(dyn, '工种', trade); dyn._trade = trade;
       const material = h('input', { placeholder: '如：瓷砖/电线/腻子' });
       field(dyn, '材料大类', material); dyn._material = material;
+      const planSel = h('select', {}, [h('option', { value: '' }, '不计入计划/未选')]);
+      field(dyn, '预算内计划类别', planSel); dyn._planSel = planSel;
+      function refillPlan() {
+        planSel.innerHTML = '';
+        planSel.appendChild(h('option', { value: '' }, '不计入计划/未选'));
+        const pid = projSel.value;
+        if (pid) {
+          Projects.get(pid).then((pp) => {
+            ((pp && pp.planItems) || []).forEach((it) => {
+              planSel.appendChild(h('option', { value: it.id }, it.cat + (it.amount ? '（计划' + it.amount + '）' : '')));
+            });
+          });
+        }
+      }
+      refillPlan();
+      projSel.addEventListener('change', refillPlan);
     }
     // 金额、日期、方式、备注、照片（共用）
     const amount = h('input', { type: 'number', inputmode: 'decimal', placeholder: '0.00' });
@@ -526,6 +609,7 @@ async function txForm(presetType, presetProject) {
       }
       t.partyId = partyId; t.partyName = partyName;
       t.region = dyn._region.value; t.trade = dyn._trade.value; t.material = dyn._material.value.trim();
+      t.planCat = dyn._planSel ? dyn._planSel.value : '';
     }
     const pf = dyn._photoFile();
     if (pf) t.attachmentId = await Attachments.save(pf, pf.type);
@@ -549,11 +633,22 @@ function partyForm(existing) {
     seg.appendChild(b);
   });
   typeWrap.appendChild(seg); f.appendChild(typeWrap);
+
+  // 付款状态（针对供应商/工人：未付/已付/已对账）
+  const payWrap = h('div', { class: 'field' }, [h('label', {}, '付款状态')]);
+  const paySeg = h('div', { class: 'seg' });
+  ['unpaid', 'paid', 'reconciled'].forEach((s) => {
+    const b = h('button', { class: p.payStatus === s ? 'on' : '', onclick: () => { p.payStatus = s; paySeg.querySelectorAll('button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); } }, (PAY_STATUS[s] || {}).label || s);
+    paySeg.appendChild(b);
+  });
+  payWrap.appendChild(paySeg); f.appendChild(payWrap);
+
   field(f, '备注', h('textarea', {}, p.note || ''));
   const save = h('button', { class: 'btn primary', onclick: () => {
     p.name = name.value.trim(); if (!p.name) { toast('请填名称'); return; }
     p.phone = phone.value.trim();
     p.note = f.querySelector('textarea').value.trim();
+    p.payStatus = p.payStatus || 'unpaid';
     Parties.save(p).then(() => { closeModal(); toast(isEdit ? '已更新' : '已新建'); render(); });
   } }, isEdit ? '保存' : '新建');
   const cancel = h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消');
@@ -585,6 +680,57 @@ function field(parent, labelText, inputNode) {
   const wrap = h('div', { class: 'field' }, [h('label', {}, labelText), inputNode]);
   parent.appendChild(wrap);
   return inputNode;
+}
+
+// CSV 导入/导出（预算计划模板）
+function downloadPlanTemplate() {
+  const csv = '﻿计划类别,计划金额\n泥瓦人工,0\n瓷砖主材,0\n木工人工,0\n';
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '预算计划导入模板.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('已下载模板，按列填好后可“从表格导入”');
+}
+function parseCsv(text) {
+  const rows = []; let row = [], field = '', inq = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inq) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inq = false; }
+      else field += c;
+    } else if (c === '"') inq = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.some((x) => x !== '')) rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); if (row.some((x) => x !== '')) rows.push(row); }
+  if (rows.length && /计划类别|类别|cat/i.test(rows[0][0] || '')) rows.shift();
+  return rows;
+}
+function importPlanCsv(file, target) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const rows = parseCsv(String(reader.result));
+        let n = 0;
+        rows.forEach((r) => {
+          const cat = (r[0] || '').trim();
+          const amt = Number((r[1] || '').replace(/[^0-9.]/g, '')) || 0;
+          if (cat) { target.push({ id: uid(), cat, amount: amt }); n++; }
+        });
+        resolve(n);
+      } catch (e) { reject(e); }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file, 'utf-8');
+  });
 }
 
 // ---------- 初始化 ----------

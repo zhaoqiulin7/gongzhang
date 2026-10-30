@@ -155,12 +155,12 @@ function seedDemo() {
   const R = (o) => memPut('reminders', Object.assign({ createdAt: now, done: false }, o));
 
   P({ id: 'p1', name: '保利香槟 3-1201 王先生', clientName: '王先生', phone: '138****0011', address: '保利香槟 3栋1201', houseType: '三室两厅', buildArea: 89, constructArea: 89, manager: '老陈', designer: '设计部·林', contractAmount: 80000, costBudget: 60000, startDate: '2026-09-01', endDate: '2026-11-30', status: 'ongoing',
-    stages: [ { id: 'p1s1', name: '开工', done: true, date: '2026-09-01' }, { id: 'p1s2', name: '水电施工', done: true, date: '2026-09-10' }, { id: 'p1s3', name: '水电验收', done: true, date: '2026-09-18' }, { id: 'p1s4', name: '泥工进场', done: false, date: '' }, { id: 'p1s5', name: '木工交底', done: false, date: '' }, { id: 'p1s6', name: '竣工', done: false, date: '' } ] });
+    stages: [ { id: 'p1s1', name: '开工', done: true, date: '2026-09-01' }, { id: 'p1s2', name: '水电施工', done: true, date: '2026-09-10' }, { id: 'p1s3', name: '水电验收', done: true, date: '2026-09-18' }, { id: 'p1s4', name: '泥工进场', done: false, date: '' }, { id: 'p1s5', name: '木工交底', done: false, date: '' }, { id: 'p1s6', name: '竣工', done: false, date: '' } ], planItems: [ { id: 'p1pi1', cat: '泥瓦人工', amount: 30000 }, { id: 'p1pi2', cat: '瓷砖主材', amount: 20000 }, { id: 'p1pi3', cat: '木工人工', amount: 15000 } ] });
   P({ id: 'p2', name: '绿地城 5-802 李女士', clientName: '李女士', phone: '139****0022', address: '绿地城 5栋802', houseType: '四室两厅', buildArea: 120, constructArea: 120, manager: '老陈', designer: '设计部·林', contractAmount: 120000, costBudget: 95000, startDate: '2026-10-10', endDate: '2026-12-20', status: 'ongoing',
-    stages: [ { id: 'p2s1', name: '开工', done: false, date: '' }, { id: 'p2s2', name: '水电施工', done: false, date: '' }, { id: 'p2s3', name: '水电验收', done: false, date: '' }, { id: 'p2s4', name: '泥工进场', done: false, date: '' }, { id: 'p2s5', name: '木工交底', done: false, date: '' }, { id: 'p2s6', name: '竣工', done: false, date: '' } ] });
+    stages: [ { id: 'p2s1', name: '开工', done: false, date: '' }, { id: 'p2s2', name: '水电施工', done: false, date: '' }, { id: 'p2s3', name: '水电验收', done: false, date: '' }, { id: 'p2s4', name: '泥工进场', done: false, date: '' }, { id: 'p2s5', name: '木工交底', done: false, date: '' }, { id: 'p2s6', name: '竣工', done: false, date: '' } ], planItems: [ { id: 'p2pi1', cat: '水电材料', amount: 25000 }, { id: 'p2pi2', cat: '泥瓦人工', amount: 40000 } ] });
 
-  PA({ id: 'pa1', name: '佛山瓷砖批发·陈老板', type: 'supplier', phone: '', note: '主材供应商' });
-  PA({ id: 'pa2', name: '木工·老张', type: 'worker', phone: '', note: '木工班组' });
+  PA({ id: 'pa1', name: '佛山瓷砖批发·陈老板', type: 'supplier', phone: '', note: '主材供应商', payStatus: 'unpaid' });
+  PA({ id: 'pa2', name: '木工·老张', type: 'worker', phone: '', note: '木工班组', payStatus: 'paid' });
   PA({ id: 'pa3', name: '王先生', type: 'client', phone: '138****0011', note: '保利香槟业主' });
 
   T({ id: 't1', projectId: 'p1', kind: 'income', txType: '首付', amount: 40000, date: '2026-09-05', method: 'wechat', partyId: 'pa3', partyName: '王先生', note: '开工首付', invoiceState: 'opened', invoiceType: 'common', tax: 0 });
