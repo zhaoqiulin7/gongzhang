@@ -165,13 +165,14 @@ function seedDemo() {
   PA({ id: 'pa4', name: '施工经理·老陈', type: 'manager', phone: '', note: '现场施工管理', payStatus: 'unpaid' });
   PA({ id: 'pa5', name: '设计师·林工', type: 'designer', phone: '', note: '设计部', payStatus: 'reconciled' });
 
-  T({ id: 't1', projectId: 'p1', type: 'income', subType: '首付款', amount: 40000, date: '2026-09-05', method: '微信', partyId: 'pa3', partyName: '王先生', note: '开工首付', invoiceStatus: '已开', invoiceType: '普票', tax: 0 });
-  T({ id: 't2', projectId: 'p1', type: 'income', subType: '进度款', amount: 20000, date: '2026-10-08', method: '银行转账', partyId: 'pa3', partyName: '王先生', note: '水电完工进度款', invoiceStatus: '未开', invoiceType: '', tax: 0 });
-  T({ id: 't3', projectId: 'p1', type: 'expense', category: '材料费', amount: 12000, date: '2026-09-20', method: 'transfer', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', area: '厨卫', trade: '泥瓦', material: '瓷砖', note: '卫生间+厨房瓷砖' });
-  T({ id: 't4', projectId: 'p1', type: 'expense', category: '人工费', amount: 8000, date: '2026-10-12', method: 'cash', partyId: 'pa2', partyName: '木工·老张', area: '全屋', trade: '木工', material: '', note: '全屋吊顶木工' });
-  T({ id: 't5', projectId: 'p2', type: 'expense', category: '材料费', amount: 20000, date: '2026-10-15', method: 'transfer', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', area: '客厅', trade: '泥瓦', material: '地砖', note: '客厅地砖' });
-  T({ id: 't6', projectId: 'p1', type: 'expense', category: '管理费', amount: 3000, date: '2026-10-20', method: 'cash', partyId: 'pa4', partyName: '施工经理·老陈', area: '全屋', trade: '其他', material: '', note: '施工管理费' });
-  T({ id: 't7', projectId: 'p1', type: 'expense', category: '管理费', amount: 5000, date: '2026-10-22', method: 'transfer', partyId: 'pa5', partyName: '设计师·林工', area: '全屋', trade: '其他', material: '', note: '设计费' });
+  T({ id: 't1', projectId: 'p1', type: 'income', subType: '首付款', amount: 40000, date: '2026-09-05', time: '10:20', method: '微信', account: '微信', partyId: 'pa3', partyName: '王先生', note: '开工首付', invoiceStatus: '已开', invoiceType: '普票', taxAmount: 0 });
+  T({ id: 't2', projectId: 'p1', type: 'income', subType: '进度款', amount: 20000, date: '2026-10-08', time: '15:40', method: '银行转账', account: '银行转账', partyId: 'pa3', partyName: '王先生', note: '水电完工进度款', invoiceStatus: '未开', invoiceType: '普票', taxAmount: 0 });
+  T({ id: 't3', projectId: 'p1', type: 'expense', category: '材料费', subCat: '主材', amount: 12000, date: '2026-09-20', time: '09:30', method: '银行转账', account: '银行转账', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', region: '厨卫', trade: '泥瓦', material: '瓷砖', note: '卫生间+厨房瓷砖' });
+  T({ id: 't4', projectId: 'p1', type: 'expense', category: '人工费', subCat: '木工', amount: 8000, date: '2026-10-12', time: '17:05', method: '现金', account: '现金', partyId: 'pa2', partyName: '木工·老张', region: '全屋', trade: '木工', material: '', note: '全屋吊顶木工' });
+  T({ id: 't5', projectId: 'p2', type: 'expense', category: '材料费', subCat: '主材', amount: 20000, date: '2026-10-15', time: '11:12', method: '银行转账', account: '银行转账', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', region: '客厅', trade: '泥瓦', material: '地砖', note: '客厅地砖' });
+  T({ id: 't6', projectId: 'p1', type: 'expense', category: '管理费', subCat: '管理人员', amount: 3000, date: '2026-10-20', time: '09:00', method: '现金', account: '现金', partyId: 'pa4', partyName: '施工经理·老陈', region: '全屋', trade: '其他', material: '', note: '施工管理费' });
+  T({ id: 't7', projectId: 'p1', type: 'expense', category: '管理费', subCat: '设计费', amount: 5000, date: '2026-10-22', time: '14:30', method: '银行转账', account: '银行转账', partyId: 'pa5', partyName: '设计师·林工', region: '全屋', trade: '其他', material: '', note: '设计费' });
+  T({ id: 't8', projectId: 'p1', type: 'transfer', amount: 5000, date: '2026-10-23', time: '10:10', method: '银行转账', account: '银行转账', fromAccount: '银行转账', toAccount: '现金', note: '从银行转现金备用金' });
 
   R({ id: 'r1', projectId: 'p1', kind: 'receive', title: '尾款催收', amount: 20000, dueDate: '2026-11-25', note: '竣工验收后收尾款' });
   R({ id: 'r2', projectId: 'p1', kind: 'pay', title: '瓷砖尾款', amount: 5000, dueDate: '2026-11-02', note: '付陈老板瓷砖尾款' });
@@ -179,6 +180,24 @@ function seedDemo() {
   memPut('meta', { key: 'remindDays', value: 3 });
   memPut('meta', { key: 'stageTemplate', value: [ { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' }, { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' } ] });
   memPut('meta', { key: 'planCategories', value: ['泥瓦人工', '瓷砖主材', '木工人工', '水电材料', '水电人工', '油漆人工', '垃圾清运', '其他'] });
+  memPut('meta', { key: 'accounts', value: [
+    { id: 'acc-1', name: '现金', opening: 0, note: '' },
+    { id: 'acc-2', name: '微信', opening: 0, note: '' },
+    { id: 'acc-3', name: '支付宝', opening: 0, note: '' },
+    { id: 'acc-4', name: '银行转账', opening: 0, note: '公司对公账户' }
+  ] });
+  memPut('meta', { key: 'catTree', value: [
+    { id: 'c1', name: '材料费', subs: [ { id: 'c1-1', name: '辅材' }, { id: 'c1-2', name: '主材' }, { id: 'c1-3', name: '五金' }, { id: 'c1-4', name: '水电材料' } ] },
+    { id: 'c2', name: '人工费', subs: [ { id: 'c2-1', name: '水电工' }, { id: 'c2-2', name: '泥工' }, { id: 'c2-3', name: '木工' }, { id: 'c2-4', name: '油漆工' }, { id: 'c2-5', name: '安装工' } ] },
+    { id: 'c3', name: '分包费', subs: [ { id: 'c3-1', name: '整包' }, { id: 'c3-2', name: '零包' } ] },
+    { id: 'c4', name: '管理费', subs: [ { id: 'c4-1', name: '设计费' }, { id: 'c4-2', name: '管理人员' }, { id: 'c4-3', name: '其他' } ] },
+    { id: 'c5', name: '其他', subs: [ { id: 'c5-1', name: '其他' } ] }
+  ] });
+  memPut('meta', { key: 'txTemplates', value: [
+    { id: 'tp1', name: '瓷砖主材', type: 'expense', amount: 0, category: '材料费', note: '' },
+    { id: 'tp2', name: '泥工人工', type: 'expense', amount: 0, category: '人工费', note: '' },
+    { id: 'tp3', name: '进度款收款', type: 'income', amount: 0, category: '', note: '' }
+  ] });
 }
 
 // ---------------- 对外 API ----------------
@@ -282,6 +301,59 @@ function fmtDate(iso) {
   return String(iso).slice(0, 10);
 }
 
+// 2026-10-15 19:33
+function fmtDateTime(iso, tm) {
+  const d = fmtDate(iso);
+  if (!d) return '';
+  return tm ? d + ' ' + tm : d;
+}
+
+// 10月15日
+function fmtMD(iso) {
+  if (!iso) return '';
+  const p = String(iso).slice(0, 10).split('-');
+  if (p.length < 3) return String(iso);
+  return Number(p[1]) + '月' + Number(p[2]) + '日';
+}
+
+const WEEK_CN = ['日', '一', '二', '三', '四', '五', '六'];
+function weekdayCN(iso) {
+  if (!iso) return '';
+  const p = String(iso).slice(0, 10).split('-').map(Number);
+  if (p.length < 3) return '';
+  const d = new Date(p[0], p[1] - 1, p[2]);
+  return '周' + WEEK_CN[d.getDay()];
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function ymd(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function nowHm() { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+
+// 时间维度区间：今天 / 本周 / 本月 / 本季度 / 本年 / 全部
+function timeRanges(ref) {
+  const now = ref ? new Date(ref) : new Date();
+  const y = now.getFullYear(), m = now.getMonth(), q = Math.floor(m / 3);
+  const dow = (now.getDay() + 6) % 7; // 周一为一周起点
+  const sWeek = new Date(y, m, now.getDate() - dow);
+  const eWeek = new Date(y, m, now.getDate() - dow + 6);
+  const sMonth = new Date(y, m, 1);
+  const eMonth = new Date(y, m + 1, 0);
+  const sQ = new Date(y, q * 3, 1);
+  const eQ = new Date(y, q * 3 + 3, 0);
+  return [
+    { key: 'day', label: '今天', sub: ymd(now), from: ymd(now), to: ymd(now) },
+    { key: 'week', label: '本周', sub: ymd(sWeek) + ' - ' + ymd(eWeek), from: ymd(sWeek), to: ymd(eWeek) },
+    { key: 'month', label: '本月', sub: (m + 1) + '月1日 - ' + (m + 1) + '月' + eMonth.getDate() + '日', from: ymd(sMonth), to: ymd(eMonth) },
+    { key: 'quarter', label: '本季度', sub: y + '年' + (q * 3 + 1) + '月 - ' + (q * 3 + 3) + '月', from: ymd(sQ), to: ymd(eQ) },
+    { key: 'year', label: '本年', sub: y + '年1月1日 - 12月31日', from: y + '-01-01', to: y + '-12-31' },
+    { key: 'all', label: '全部时间', sub: '全部记录', from: '0000-01-01', to: '9999-12-31' }
+  ];
+}
+function rangeOf(key, ref) {
+  const r = timeRanges(ref).find((x) => x.key === key) || timeRanges(ref)[2];
+  return r;
+}
+
 function today() {
   const d = new Date();
   const p = (x) => String(x).padStart(2, '0');
@@ -359,7 +431,12 @@ function setPageTitle(t) {
 
 
 
-const state = { projectId: null, homeSort: 'start', homeStage: 'all', partiesSort: 'type', partyScope: 'all' };
+const state = {
+  projectId: null, homeSort: 'start', homeStage: 'all', partiesSort: 'type', partyScope: 'all',
+  hideMoney: false,
+  ledgerRange: 'month', ledgerCat: 'all', ledgerSub: 'all', ledgerAccount: 'all',
+  ledgerProject: 'all', ledgerQ: '', ledgerSort: 'date'
+};
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
 const DEFAULT_STAGES = [
@@ -367,24 +444,81 @@ const DEFAULT_STAGES = [
   { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' }
 ];
 
+// 默认分类树（一级 → 二级），可在「设置」中维护
+const DEFAULT_CAT_TREE = [
+  { name: '材料费', subs: ['辅材', '主材', '五金', '水电材料'] },
+  { name: '人工费', subs: ['水电工', '泥工', '木工', '油漆工', '安装工'] },
+  { name: '分包费', subs: ['整包', '零包'] },
+  { name: '管理费', subs: ['设计费', '管理人员', '其他'] },
+  { name: '其他', subs: ['其他'] }
+];
+
+// ---------- 账户 / 分类树 / 模板（存 meta，兼容旧数据） ----------
+async function getAccounts() {
+  let list = await Meta.get('accounts', null);
+  if (!list || !list.length) {
+    list = PAY_METHODS.map((n, i) => ({ id: 'acc-' + (i + 1), name: n, opening: 0, note: '' }));
+    await Meta.set('accounts', list);
+  }
+  return list;
+}
+async function getCatTree() {
+  let tree = await Meta.get('catTree', null);
+  if (!tree || !tree.length) {
+    tree = DEFAULT_CAT_TREE.map((c, i) => ({
+      id: 'c' + (i + 1), name: c.name,
+      subs: c.subs.map((s, j) => ({ id: 'c' + (i + 1) + '-' + (j + 1), name: s }))
+    }));
+    await Meta.set('catTree', tree);
+  }
+  return tree;
+}
+async function getTemplates() {
+  return (await Meta.get('txTemplates', [])) || [];
+}
+
+
 // ---------- 计算 ----------
 function isIncome(t) { return t.type === 'income' || t.kind === 'income'; }
 function isExpense(t) { return t.type === 'expense' || t.kind === 'expense'; }
+function isTransfer(t) { return t.type === 'transfer'; }
+
+// 金额显示（支持隐藏金额开关）
+function M(n) { return state.hideMoney ? '¥****' : fmtMoney(n); }
 
 async function projStats(pid) {
   const txs = await Transactions.byProject(pid);
   let income = 0, expense = 0;
-  txs.forEach((t) => { if (isIncome(t)) income += Number(t.amount) || 0; else expense += Number(t.amount) || 0; });
+  txs.forEach((t) => {
+    if (isIncome(t)) income += Number(t.amount) || 0;
+    else if (isExpense(t)) expense += Number(t.amount) || 0;
+  });
   return { income, expense, profit: income - expense, count: txs.length };
 }
 
 // 同步统计某项目收支（用已加载的 txs，避免逐个异步）
 function quickStats(txs, pid) {
-  let income = 0, expense = 0;
+  let income = 0, expense = 0, count = 0;
   txs.filter((t) => t.projectId === pid).forEach((t) => {
-    if (isIncome(t)) income += Number(t.amount) || 0; else expense += Number(t.amount) || 0;
+    count++;
+    if (isIncome(t)) income += Number(t.amount) || 0;
+    else if (isExpense(t)) expense += Number(t.amount) || 0;
   });
-  return { income, expense, profit: income - expense };
+  return { income, expense, profit: income - expense, count };
+}
+
+// 时间维度汇总（今天/本周/本月/本季/本年/全部）
+function timeRangeSummary(txs) {
+  return timeRanges().map((r) => {
+    let income = 0, expense = 0;
+    txs.forEach((t) => {
+      const d = fmtDate(t.date);
+      if (d < r.from || d > r.to) return;
+      if (isIncome(t)) income += Number(t.amount) || 0;
+      else if (isExpense(t)) expense += Number(t.amount) || 0;
+    });
+    return { r: r, income: income, expense: expense };
+  });
 }
 
 // 当前所处施工阶段（用于看板分组）
@@ -427,6 +561,10 @@ async function render() {
   if (route === 'projects') node = await projectsView();
   else if (route === 'parties') node = await partiesView();
   else if (route === 'settings') node = await settingsView();
+  else if (route === 'ledger') {
+    if (parts[1] && rangeOf(parts[1]).key === parts[1]) state.ledgerRange = parts[1];
+    node = await ledgerView();
+  }
   else if (route === 'project' && parts[1]) node = await projectDetailView(parts[1]);
   else node = await homeView();
 
@@ -442,6 +580,8 @@ function setupFab(route, pid) {
     fab = h('button', { class: 'fab', title: '新建项目', onclick: () => projectForm() }, '+');
   } else if (route === 'parties') {
     fab = h('button', { class: 'fab', title: '新建往来单位', onclick: () => partyForm() }, '+');
+  } else if (route === 'ledger') {
+    fab = h('button', { class: 'fab', title: '记一笔', onclick: () => txForm('expense', '') }, '+');
   } else if (route === 'project' && pid) {
     fab = h('button', { class: 'fab', title: '记一笔', onclick: () => txForm(null, pid) }, '+');
   }
@@ -453,22 +593,46 @@ async function homeView() {
   setPageTitle('装修记账');
   const [projects, txs, rems] = await Promise.all([Projects.all(), Transactions.all(), Reminders.all()]);
   let income = 0, expense = 0;
-  txs.forEach((t) => { if (isIncome(t)) income += Number(t.amount) || 0; else expense += Number(t.amount) || 0; });
+  txs.forEach((t) => {
+    if (isIncome(t)) income += Number(t.amount) || 0;
+    else if (isExpense(t)) expense += Number(t.amount) || 0;
+  });
   let recvDue = 0, payDue = 0;
   rems.filter((r) => !r.done).forEach((r) => {
     if (r.kind === 'receive') recvDue += Number(r.amount) || 0; else payDue += Number(r.amount) || 0;
   });
 
   const wrap = h('div');
-  wrap.appendChild(h('h2', { class: 'section' }, '总览（累计）'));
-  wrap.appendChild(h('div', { class: 'stat-grid' }, [
-    stat('总收入', fmtMoney(income), 'income'),
-    stat('总支出', fmtMoney(expense), 'expense'),
-    stat('总利润', fmtMoney(income - expense), 'profit'),
-    stat('项目数', String(projects.length), '', () => { location.hash = '#/projects'; }),
-    stat('待收', fmtMoney(recvDue), 'income', () => drillDue('receive')),
-    stat('待付', fmtMoney(payDue), 'expense', () => drillDue('pay'))
+  wrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
+    h('h2', { class: 'section', style: 'margin:0' }, '总览（累计）'),
+    h('button', { class: 'eye-btn', title: '隐藏/显示金额', onclick: () => { state.hideMoney = !state.hideMoney; Meta.set('hideMoney', state.hideMoney).then(render); } }, state.hideMoney ? '🙈' : '👁')
   ]));
+  wrap.appendChild(h('div', { class: 'stat-grid' }, [
+    stat('总收入', M(income), 'income'),
+    stat('总支出', M(expense), 'expense'),
+    stat('总利润', M(income - expense), 'profit'),
+    stat('项目数', String(projects.length), '', () => { location.hash = '#/projects'; }),
+    stat('待收', M(recvDue), 'income', () => drillDue('receive')),
+    stat('待付', M(payDue), 'expense', () => drillDue('pay'))
+  ]));
+
+  // 按时间维度汇总（点击下钻到流水页）
+  wrap.appendChild(h('h2', { class: 'section' }, '按时间维度'));
+  const timeCard = h('div', { class: 'card' });
+  timeRangeSummary(txs).forEach((it) => {
+    timeCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/ledger/' + it.r.key; } }, [
+      h('div', { style: 'flex:1;min-width:0' }, [
+        h('div', { style: 'font-weight:600;font-size:14px' }, it.r.label),
+        h('div', { class: 'meta' }, it.r.sub)
+      ]),
+      h('div', { class: 'tr-r' }, [
+        h('div', { class: 'amt expense' }, '-' + M(it.expense)),
+        h('div', { class: 'amt income', style: 'font-size:13px' }, '+' + M(it.income))
+      ]),
+      h('span', { class: 'chev' }, '›')
+    ]));
+  });
+  wrap.appendChild(timeCard);
 
   // 项目进度看板：排序 + 按施工阶段筛选
   wrap.appendChild(h('h2', { class: 'section' }, '项目进度看板'));
@@ -514,7 +678,7 @@ async function homeView() {
   } else {
     const sum = withStats.reduce((acc, o) => { acc.i += o.s.income; acc.e += o.s.expense; return acc; }, { i: 0, e: 0 });
     wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-2px 0 10px' },
-      '当前筛选合计：收 ' + fmtMoney(sum.i) + ' · 支 ' + fmtMoney(sum.e) + ' · 利润 ' + fmtMoney(sum.i - sum.e)));
+      '当前筛选合计：收 ' + M(sum.i) + ' · 支 ' + M(sum.e) + ' · 利润 ' + M(sum.i - sum.e)));
     withStats.forEach(({ p, s }) => wrap.appendChild(projectCard(p, s)));
   }
   return wrap;
@@ -533,7 +697,7 @@ async function drillDue(kind) {
         h('div', {}, (kind === 'receive' ? '收款·' : '付款·') + (r.title || '未命名节点')),
         h('div', { class: 'meta' }, pname(r.projectId) + (r.dueDate ? ' · 约定 ' + fmtDate(r.dueDate) : '') + (r.done ? ' · 已完成' : ''))
       ]),
-      h('div', { style: 'font-weight:700', class: kind === 'receive' ? 'amt income' : 'amt expense' }, r.amount ? fmtMoney(r.amount) : '')
+      h('div', { style: 'font-weight:700', class: kind === 'receive' ? 'amt income' : 'amt expense' }, r.amount ? M(r.amount) : '')
     ]));
   });
   openModal(kind === 'receive' ? '待收明细（点击看板「待收」进入）' : '待付明细（点击看板「待付」进入）', body, [h('button', { class: 'btn ghost', onclick: () => closeModal() }, '关闭')]);
@@ -572,12 +736,13 @@ function projectCard(p, stats) {
   ]));
 
   const body = h('div', { style: 'margin-top:8px;display:flex;gap:14px;flex-wrap:wrap' });
-  body.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, p.contractAmount ? '合同 ' + fmtMoney(p.contractAmount) : '合同 —'));
+  body.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, p.contractAmount ? '合同 ' + M(p.contractAmount) : '合同 —'));
+  if (st.count != null) body.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, st.count + ' 笔'));
   card.appendChild(body);
 
   card.appendChild(h('div', { class: 'row-between', style: 'margin-top:10px' }, [
-    h('div', { class: 'muted', style: 'font-size:12px' }, '收 ' + fmtMoney(st.income) + ' · 支 ' + fmtMoney(st.expense)),
-    h('div', { style: 'font-weight:700;color:var(--accent)' }, '利润 ' + fmtMoney(st.profit))
+    h('div', { class: 'muted', style: 'font-size:12px' }, '收 ' + M(st.income) + ' · 支 ' + M(st.expense)),
+    h('div', { style: 'font-weight:700;color:var(--accent)' }, '结余 ' + M(st.profit))
   ]));
 
   card.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:12px' }, [
@@ -588,11 +753,214 @@ function projectCard(p, stats) {
   return card;
 }
 
+// ---------- 全局流水（对齐参考：汇总卡 + 时间粒度 + 维度筛选 + 搜索 + 年月分组） ----------
+async function ledgerView() {
+  setPageTitle('流水');
+  const [txs, projects, parties, accounts, catTree] = await Promise.all([
+    Transactions.all(), Projects.all(), Parties.all(), getAccounts(), getCatTree()
+  ]);
+  const pname = (id) => { const p = projects.find((x) => x.id === id); return p ? p.name : '未关联项目'; };
+
+  // ---- 筛选 ----
+  const ranges = timeRanges();
+  const rg = ranges.find((r) => r.key === state.ledgerRange) || ranges[2];
+  let list = txs.filter((t) => {
+    const d = fmtDate(t.date);
+    return d >= rg.from && d <= rg.to;
+  });
+  if (state.ledgerCat !== 'all') list = list.filter((t) => (t.category || '') === state.ledgerCat);
+  if (state.ledgerSub !== 'all') list = list.filter((t) => (t.subCat || '') === state.ledgerSub);
+  if (state.ledgerAccount !== 'all') list = list.filter((t) => (t.account || t.method || '') === state.ledgerAccount);
+  if (state.ledgerProject !== 'all') list = list.filter((t) => t.projectId === state.ledgerProject);
+  const q = state.ledgerQ.trim().toLowerCase();
+  if (q) {
+    list = list.filter((t) => {
+      const hay = [t.category, t.subCat, t.subType, t.partyName, t.memberName, t.merchantName, t.note, t.material, t.fromAccount, t.toAccount, pname(t.projectId)]
+        .filter(Boolean).join(' ').toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+  }
+  if (state.ledgerSort === 'amount') list = list.slice().sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
+  else if (state.ledgerSort === 'amountAsc') list = list.slice().sort((a, b) => (Number(a.amount) || 0) - (Number(b.amount) || 0));
+  else list = list.slice().sort((a, b) => (fmtDate(b.date) + (b.time || '')).localeCompare(fmtDate(a.date) + (a.time || '')));
+
+  // ---- 汇总（转账不计入收入/支出） ----
+  let income = 0, expense = 0, transfer = 0;
+  list.forEach((t) => {
+    if (isIncome(t)) income += Number(t.amount) || 0;
+    else if (isExpense(t)) expense += Number(t.amount) || 0;
+    else transfer += Number(t.amount) || 0;
+  });
+
+  const wrap = h('div');
+
+  // 常用模板（一键套用）
+  const tpls = await getTemplates();
+  if (tpls.length) {
+    wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:0' }, '常用模板'));
+    const tplRow = h('div', { class: 'chips', style: 'margin-bottom:14px' });
+    tpls.forEach((tp) => {
+      tplRow.appendChild(h('button', { class: 'chip', title: '套用模板记账', onclick: () => {
+        txForm(tp.type || 'expense', '', null, { type: tp.type || 'expense', amount: tp.amount, category: tp.category, note: tp.note });
+      } }, tp.name + (tp.amount ? ' · ' + M(tp.amount) : '')));
+    });
+    wrap.appendChild(tplRow);
+  }
+
+  // 汇总卡
+  const sumCard = h('div', { class: 'card sum-card' });
+  sumCard.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { class: 'sum-label' }, rg.label + ' · ' + rg.sub),
+    h('button', { class: 'eye-btn', title: '隐藏/显示金额', onclick: () => { state.hideMoney = !state.hideMoney; Meta.set('hideMoney', state.hideMoney).then(render); } }, state.hideMoney ? '🙈' : '👁')
+  ]));
+  sumCard.appendChild(h('div', { class: 'sum-main' }, [
+    h('span', { class: 'sum-k' }, '结余 '),
+    h('span', { class: 'sum-v' }, M(income - expense))
+  ]));
+  sumCard.appendChild(h('div', { class: 'sum-sub' }, [
+    h('span', {}, '收入 ' + M(income)),
+    h('span', { style: 'margin:0 8px' }, '|'),
+    h('span', {}, '支出 ' + M(expense)),
+    transfer ? h('span', { style: 'margin-left:8px' }, '转账 ' + M(transfer)) : null
+  ]));
+  wrap.appendChild(sumCard);
+
+  // 时间粒度
+  const pills = h('div', { class: 'pill-tabs' });
+  ranges.forEach((r) => {
+    pills.appendChild(h('button', { class: 'pill' + (state.ledgerRange === r.key ? ' on' : ''), onclick: () => { state.ledgerRange = r.key; render(); } }, r.label));
+  });
+  wrap.appendChild(pills);
+
+  // 维度筛选：分类（两级）/ 账户 / 项目
+  const dimCard = h('div', { class: 'card' });
+  dimCard.appendChild(h('div', { class: 'dim-row' }, [
+    h('span', { class: 'dim-k' }, '分类'),
+    h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerCat = e.target.value; state.ledgerSub = 'all'; render(); } },
+      [h('option', { value: 'all' }, '全部分类')].concat(catTree.map((c) => h('option', { value: c.name }, c.name))))
+  ]));
+  if (state.ledgerCat !== 'all') {
+    const c = catTree.find((x) => x.name === state.ledgerCat);
+    const subs = (c && c.subs) || [];
+    if (subs.length) {
+      dimCard.appendChild(h('div', { class: 'dim-row' }, [
+        h('span', { class: 'dim-k' }, '二级'),
+        h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerSub = e.target.value; render(); } },
+          [h('option', { value: 'all' }, '全部二级')].concat(subs.map((s) => h('option', { value: s.name }, s.name))))
+      ]));
+    }
+  }
+  dimCard.appendChild(h('div', { class: 'dim-row' }, [
+    h('span', { class: 'dim-k' }, '账户'),
+    h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerAccount = e.target.value; render(); } },
+      [h('option', { value: 'all' }, '全部账户')].concat(accounts.map((a) => h('option', { value: a.name }, a.name))))
+  ]));
+  dimCard.appendChild(h('div', { class: 'dim-row' }, [
+    h('span', { class: 'dim-k' }, '项目'),
+    h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerProject = e.target.value; render(); } },
+      [h('option', { value: 'all' }, '全部项目')].concat(projects.map((p) => h('option', { value: p.id }, p.name))))
+  ]));
+  // 搜索
+  const qInp = h('input', { class: 'ctl', style: 'flex:1;min-width:0', placeholder: '搜索备注/单位/项目/分类', value: state.ledgerQ });
+  qInp.addEventListener('input', (e) => {
+    state.ledgerQ = e.target.value;
+    clearTimeout(qInp._t);
+    qInp._t = setTimeout(render, 350);
+  });
+  dimCard.appendChild(h('div', { class: 'dim-row' }, [h('span', { class: 'dim-k' }, '搜索'), qInp]));
+  // 排序
+  const sortSeg = h('div', { class: 'seg', style: 'flex:1' });
+  [['date', '按日期'], ['amount', '金额↓'], ['amountAsc', '金额↑']].forEach(([v, label]) => {
+    sortSeg.appendChild(h('button', { class: state.ledgerSort === v ? 'on' : '', onclick: () => { state.ledgerSort = v; render(); } }, label));
+  });
+  dimCard.appendChild(h('div', { class: 'dim-row' }, [h('span', { class: 'dim-k' }, '排序'), sortSeg]));
+  wrap.appendChild(dimCard);
+
+  // ---- 年 → 月 分组列表 ----
+  if (!list.length) {
+    wrap.appendChild(emptyState('该条件下没有流水', '换个时间范围或清除筛选'));
+  } else {
+    const byYear = {};
+    list.forEach((t) => {
+      const d = fmtDate(t.date);
+      const y = d.slice(0, 4) || '未知';
+      const mo = d.slice(5, 7) || '00';
+      byYear[y] = byYear[y] || {};
+      byYear[y][mo] = byYear[y][mo] || [];
+      byYear[y][mo].push(t);
+    });
+    Object.keys(byYear).sort().reverse().forEach((y) => {
+      const months = byYear[y];
+      let yIn = 0, yOut = 0;
+      Object.keys(months).forEach((mo) => months[mo].forEach((t) => {
+        if (isIncome(t)) yIn += Number(t.amount) || 0;
+        else if (isExpense(t)) yOut += Number(t.amount) || 0;
+      }));
+      const yearCard = h('div', { class: 'card' });
+      yearCard.appendChild(h('div', { class: 'row-between' }, [
+        h('div', { style: 'font-weight:700' }, y + ' 年'),
+        h('div', { class: 'muted', style: 'font-size:12px' }, '结余 ' + M(yIn - yOut) + ' · 收 ' + M(yIn) + ' · 支 ' + M(yOut))
+      ]));
+      wrap.appendChild(yearCard);
+
+      Object.keys(months).sort().reverse().forEach((mo) => {
+        const mCard = h('div', { class: 'card' });
+        mCard.appendChild(h('div', { class: 'month-head' }, Number(mo) + ' 月'));
+        months[mo].forEach((t) => mCard.appendChild(ledgerRow(t, pname)));
+        wrap.appendChild(mCard);
+      });
+    });
+  }
+  return wrap;
+}
+
+function ledgerRow(t, pname) {
+  const isIn = isIncome(t), isOut = isExpense(t);
+  const title = isTransfer(t)
+    ? '转账 ' + (t.fromAccount || '?') + ' → ' + (t.toAccount || '?')
+    : (isIn ? (t.subType || '收入') : ((t.category || '支出') + (t.subCat ? ' · ' + t.subCat : '')));
+  const sub = [
+    pname(t.projectId),
+    isTransfer(t) ? '' : (t.partyName || ''),
+    (t.account || t.method || ''),
+    t.note || ''
+  ].filter(Boolean).join(' · ');
+  const sign = isIn ? '+' : (isOut ? '-' : '↔');
+  const cls = isIn ? 'income' : (isOut ? 'expense' : 'transfer');
+  return h('div', { class: 'tx' }, [
+    h('div', { style: 'display:flex;gap:10px;align-items:center;min-width:0;flex:1' }, [
+      h('div', { class: 'tx-date' }, [
+        h('div', { class: 'tx-d' }, String(fmtDate(t.date)).slice(8, 10) + '日'),
+        h('div', { class: 'tx-w' }, weekdayCN(t.date))
+      ]),
+      h('div', { style: 'min-width:0;flex:1' }, [
+        h('div', { style: 'font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, title),
+        h('div', { class: 'meta', style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, sub + (t.time ? ' ' + t.time : ''))
+      ])
+    ]),
+    h('div', { style: 'display:flex;align-items:center;gap:6px;flex:0 0 auto' }, [
+      h('div', { class: 'amt ' + cls }, sign + M(t.amount).replace('¥', '¥')),
+      h('button', { class: 'edit-x', title: '编辑', onclick: () => txForm(null, t.projectId, t) }, '✎')
+    ])
+  ]);
+}
+
 // ---------- 项目列表 ----------
 async function projectsView() {
   setPageTitle('项目管理');
   const [projects, txs] = await Promise.all([Projects.all(), Transactions.all()]);
   const wrap = h('div');
+  let income = 0, expense = 0;
+  txs.forEach((t) => {
+    if (isIncome(t)) income += Number(t.amount) || 0;
+    else if (isExpense(t)) expense += Number(t.amount) || 0;
+  });
+  wrap.appendChild(h('div', { class: 'stat-grid' }, [
+    stat('结余', M(income - expense), 'profit'),
+    stat('总收入', M(income), 'income'),
+    stat('总支出', M(expense), 'expense'),
+    stat('项目数', String(projects.length), '')
+  ]));
   wrap.appendChild(h('h2', { class: 'section' }, '全部项目（' + projects.length + '）'));
   if (!projects.length) wrap.appendChild(emptyState('还没有项目', '点右下角 + 新建'));
   else projects.forEach((p) => wrap.appendChild(projectCard(p, quickStats(txs, p.id))));
@@ -616,8 +984,8 @@ async function projectDetailView(id) {
     ['客户', p.clientName], ['电话', p.phone], ['地址', p.address],
     ['户型', p.houseType], ['建筑面积', p.buildArea ? p.buildArea + ' ㎡' : '—'], ['施工面积', p.constructArea ? p.constructArea + ' ㎡' : '—'],
     ['施工经理', p.manager], ['设计师', p.designer],
-    ['合同金额', p.contractAmount ? fmtMoney(p.contractAmount) : '—'],
-    ['成本预算', p.costBudget ? fmtMoney(p.costBudget) : '（未设，默认=合同额）'],
+    ['合同金额', p.contractAmount ? M(p.contractAmount) : '—'],
+    ['成本预算', p.costBudget ? M(p.costBudget) : '（未设，默认=合同额）'],
     ['开工', fmtDate(p.startDate)], ['竣工', fmtDate(p.endDate)], ['备注', p.note]
   ];
   fields.forEach(([k, v]) => {
@@ -667,9 +1035,9 @@ async function projectDetailView(id) {
   // 利润卡
   const st = await projStats(id);
   const profitCard = h('div', { class: 'stat-grid' }, [
-    stat('收入', fmtMoney(st.income), 'income'),
-    stat('支出', fmtMoney(st.expense), 'expense'),
-    stat('利润', fmtMoney(st.profit), 'profit'),
+    stat('收入', M(st.income), 'income'),
+    stat('支出', M(st.expense), 'expense'),
+    stat('利润', M(st.profit), 'profit'),
     stat('笔数', String(st.count), '')
   ]);
   wrap.appendChild(profitCard);
@@ -711,7 +1079,7 @@ async function projectDetailView(id) {
           top.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, [sel, inp, del]));
         } else {
           top.appendChild(h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'));
-          top.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + fmtMoney(plan) + ' · 已用 ' + fmtMoney(spent) + (over ? ' · 超支 ' + fmtMoney(spent - plan) : (left >= 0 ? ' · 余 ' + fmtMoney(left) : ''))));
+          top.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + M(plan) + ' · 已用 ' + M(spent) + (over ? ' · 超支 ' + M(spent - plan) : (left >= 0 ? ' · 余 ' + M(left) : ''))));
         }
         row.appendChild(top);
         if (!planEditMode) row.appendChild(h('div', { class: 'bar', style: 'margin-top:5px' }, [ h('div', { class: 'bar-fill' + (over ? ' over' : ''), style: 'width:' + pct + '%' }) ]));
@@ -739,7 +1107,7 @@ async function projectDetailView(id) {
     remCard.appendChild(h('div', { class: 'tx' }, [
       h('div', {}, [
         h('div', {}, (r.kind === 'receive' ? '收款·' : '付款·') + (r.title || '')),
-        h('div', { class: 'meta' }, fmtDate(r.dueDate) + (r.amount ? ' · ' + fmtMoney(r.amount) : '') + (r.done ? ' · 已完成' : ''))
+        h('div', { class: 'meta' }, fmtDate(r.dueDate) + (r.amount ? ' · ' + M(r.amount) : '') + (r.done ? ' · 已完成' : ''))
       ]),
       h('div', { style: 'display:flex;gap:6px' }, [
         h('button', { class: 'btn sm ghost', onclick: () => { r.done = !r.done; Reminders.save(r).then(render); } }, r.done ? '↺' : '✓'),
@@ -757,12 +1125,17 @@ async function projectDetailView(id) {
   else {
     const list = h('div', { class: 'card' });
     for (const t of txs) {
+      const isTr = isTransfer(t);
+      const title = isTr
+        ? '转账 ' + (t.fromAccount || '?') + ' → ' + (t.toAccount || '?')
+        : (isIncome(t) ? '收 ' + (t.subType || '收入') : '支 ' + ((t.category || '支出') + (t.subCat ? '·' + t.subCat : '')))
+          + (t.partyName ? '·' + t.partyName : '');
       const left = h('div', {}, [
-        h('div', {}, (t.type === 'income' ? '收 ' : '支 ') + (t.type === 'income' ? t.subType : t.category) + (t.partyName ? '·' + t.partyName : '')),
-        h('div', { class: 'meta' }, fmtDate(t.date) + (t.invoiceStatus ? ' · 票:' + t.invoiceStatus : '') + (t.material ? ' · ' + t.material : ''))
+        h('div', {}, title),
+        h('div', { class: 'meta' }, fmtDateTime(t.date, t.time) + (t.invoiceStatus ? ' · 票:' + t.invoiceStatus : '') + (t.material ? ' · ' + t.material : '') + (t.account ? ' · ' + t.account : ''))
       ]);
       const right = h('div', { style: 'display:flex;align-items:center;gap:8px' }, [
-        h('div', { class: 'amt ' + (t.type === 'income' ? 'income' : 'expense') }, (t.type === 'income' ? '+' : '-') + fmtMoney(t.amount)),
+        h('div', { class: 'amt ' + (isIncome(t) ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIncome(t) ? '+' : (isTr ? '↔' : '-')) + M(t.amount)),
         h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, t); } }, '✎'),
         h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？', () => { Transactions.remove(t).then(render); }); } }, '×')
       ]);
@@ -816,7 +1189,7 @@ function partyStatsSync(txs, pid) {
   rel.forEach((t) => {
     const amt = Number(t.amount) || 0;
     if (isExpense(t)) { const c = t.category || '其他'; byCat[c] = (byCat[c] || 0) + amt; expenseTotal += amt; }
-    else incomeTotal += amt;
+    else if (isIncome(t)) incomeTotal += amt;
   });
   return { count: rel.length, byCat, expenseTotal, incomeTotal, total: expenseTotal + incomeTotal };
 }
@@ -834,7 +1207,7 @@ function partyCard(p, st, allTxs, allProjects) {
     if (!byProj[pid]) byProj[pid] = { name: pname(pid), income: 0, expense: 0, cats: {} };
     const amt = Number(t.amount) || 0;
     if (isIncome(t)) byProj[pid].income += amt;
-    else { byProj[pid].expense += amt; const c = t.category || '其他'; byProj[pid].cats[c] = (byProj[pid].cats[c] || 0) + amt; }
+    else if (isExpense(t)) { byProj[pid].expense += amt; const c = t.category || '其他'; byProj[pid].cats[c] = (byProj[pid].cats[c] || 0) + amt; }
   });
   const projIds = Object.keys(byProj);
 
@@ -844,22 +1217,22 @@ function partyCard(p, st, allTxs, allProjects) {
     h('span', { class: 'tag ' + (status.cls || 'unpaid') }, status.label || '未付')
   ]));
   card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, typeLabel + '（' + scopeLabel + '）' + (p.phone ? ' · ' + p.phone : '')));
-  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, '往来笔数：' + st.count + ' 笔 · 合计 ' + fmtMoney(st.total)));
+  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, '往来笔数：' + st.count + ' 笔 · 合计 ' + M(st.total)));
 
   // 按项目对应的收/付款明细
   if (projIds.length) {
     card.appendChild(h('div', { class: 'sub', style: 'margin-top:8px;font-weight:600' }, '对应项目收付款明细'));
     projIds.forEach((pid) => {
       const d = byProj[pid];
-      const catParts = Object.keys(d.cats).map((c) => c + ' ' + fmtMoney(d.cats[c])).join(' · ');
-      const line = (d.income > 0 ? '收 ' + fmtMoney(d.income) : '') + (d.income > 0 && d.expense > 0 ? ' / ' : '') + (d.expense > 0 ? '付 ' + fmtMoney(d.expense) : '');
+      const catParts = Object.keys(d.cats).map((c) => c + ' ' + M(d.cats[c])).join(' · ');
+      const line = (d.income > 0 ? '收 ' + M(d.income) : '') + (d.income > 0 && d.expense > 0 ? ' / ' : '') + (d.expense > 0 ? '付 ' + M(d.expense) : '');
       card.appendChild(h('div', { class: 'sub', style: 'margin-top:5px;padding-left:8px;border-left:2px solid var(--line)' }, [
         h('div', { style: 'font-weight:600' }, d.name),
         h('div', { class: 'muted', style: 'font-size:12px' }, line + (catParts ? '（' + catParts + '）' : ''))
       ]));
     });
   } else if (st.incomeTotal > 0) {
-    card.appendChild(h('div', { class: 'sub', style: 'margin-top:6px' }, '已收合计：' + fmtMoney(st.incomeTotal)));
+    card.appendChild(h('div', { class: 'sub', style: 'margin-top:6px' }, '已收合计：' + M(st.incomeTotal)));
   }
 
   card.appendChild(h('div', { style: 'display:flex;justify-content:flex-end;margin-top:10px' }, [
@@ -939,6 +1312,106 @@ async function settingsView() {
     } }, '保存类别库'));
   });
   wrap.appendChild(catLibCard);
+
+  // 账户管理
+  const accCard = h('div', { class: 'card' });
+  accCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '账户（记账时选择；转账可在两账户间划转）'));
+  const accList = h('div', { style: 'margin-top:8px' });
+  accCard.appendChild(accList);
+  getAccounts().then((accs) => {
+    function renderAccs() {
+      accList.innerHTML = '';
+      if (!accs.length) accList.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有账户，点下方「+ 添加账户」'));
+      accs.forEach((a, i) => {
+        const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+        const nm = h('input', { value: a.name || '', placeholder: '账户名称', style: 'flex:1;min-width:0' });
+        nm.addEventListener('input', () => { accs[i].name = nm.value; });
+        const op = h('input', { type: 'number', inputmode: 'decimal', value: a.opening || '', placeholder: '期初余额', style: 'width:96px;flex:0 0 auto' });
+        op.addEventListener('input', () => { accs[i].opening = Number(op.value) || 0; });
+        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { accs.splice(i, 1); renderAccs(); } }, '×');
+        row.appendChild(nm); row.appendChild(op); row.appendChild(del);
+        accList.appendChild(row);
+      });
+    }
+    renderAccs();
+    accCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { accs.push({ id: uid(), name: '', opening: 0 }); renderAccs(); } }, '+ 添加账户'));
+    accCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+      const cleaned = accs.filter((x) => (x.name || '').trim()).map((x) => ({ id: x.id || uid(), name: x.name.trim(), opening: Number(x.opening) || 0 }));
+      Meta.set('accounts', cleaned).then(() => toast('已保存账户'));
+    } }, '保存账户'));
+  });
+  wrap.appendChild(accCard);
+
+  // 分类层级（一级 ＞ 二级）
+  const treeCard = h('div', { class: 'card' });
+  treeCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '分类层级（记账时显示为「一级 ＞ 二级」）'));
+  const treeList = h('div', { style: 'margin-top:8px' });
+  treeCard.appendChild(treeList);
+  getCatTree().then((tree) => {
+    function renderTree() {
+      treeList.innerHTML = '';
+      if (!tree.length) treeList.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有分类，点下方「+ 添加分类」'));
+      tree.forEach((c, i) => {
+        const box = h('div', { style: 'margin-top:8px;padding:9px;border:1px solid var(--border);border-radius:10px' });
+        const r1 = h('div', { style: 'display:flex;gap:6px;align-items:center' });
+        const up = h('button', { class: 'btn sm ghost', title: '上移', onclick: () => { if (i > 0) { const tmp = tree[i]; tree[i] = tree[i - 1]; tree[i - 1] = tmp; renderTree(); } } }, '↑');
+        const down = h('button', { class: 'btn sm ghost', title: '下移', onclick: () => { if (i < tree.length - 1) { const tmp = tree[i]; tree[i] = tree[i + 1]; tree[i + 1] = tmp; renderTree(); } } }, '↓');
+        const nm = h('input', { value: c.name || '', placeholder: '一级分类', style: 'flex:1;min-width:0' });
+        nm.addEventListener('input', () => { c.name = nm.value; });
+        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { tree.splice(i, 1); renderTree(); } }, '×');
+        r1.appendChild(up); r1.appendChild(down); r1.appendChild(nm); r1.appendChild(del);
+        box.appendChild(r1);
+        const subsInp = h('input', { value: (c.subs || []).map((s) => s.name).join('，'), placeholder: '二级类别，逗号分隔：辅材，主材，五金', style: 'width:100%;margin-top:6px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:9px 11px;font-size:13px;font-family:inherit' });
+        subsInp.addEventListener('input', () => {
+          c.subs = subsInp.value.split(/[，,]/).map((s) => s.trim()).filter(Boolean).map((s, j) => ({ id: (c.id || 'c') + '-' + j, name: s }));
+        });
+        box.appendChild(subsInp);
+        treeList.appendChild(box);
+      });
+    }
+    renderTree();
+    treeCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { tree.push({ id: uid(), name: '', subs: [] }); renderTree(); } }, '+ 添加分类'));
+    treeCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+      const cleaned = tree.filter((x) => (x.name || '').trim()).map((x) => ({
+        id: x.id || uid(), name: x.name.trim(),
+        subs: (x.subs || []).filter((s) => (s.name || '').trim()).map((s) => ({ id: s.id || uid(), name: s.name.trim() }))
+      }));
+      Meta.set('catTree', cleaned).then(() => toast('已保存分类层级'));
+    } }, '保存分类层级'));
+  });
+  wrap.appendChild(treeCard);
+
+  // 记账模板
+  const tplCard2 = h('div', { class: 'card' });
+  tplCard2.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '记账模板（流水页一键套用，省去重复填写）'));
+  const tplList2 = h('div', { style: 'margin-top:8px' });
+  tplCard2.appendChild(tplList2);
+  getTemplates().then((tpls) => {
+    function renderTpls() {
+      tplList2.innerHTML = '';
+      if (!tpls.length) tplList2.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有模板，点下方「+ 添加模板」'));
+      tpls.forEach((tp, i) => {
+        const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+        const nm = h('input', { value: tp.name || '', placeholder: '模板名称', style: 'flex:1;min-width:0' });
+        nm.addEventListener('input', () => { tpls[i].name = nm.value; });
+        const amt = h('input', { type: 'number', inputmode: 'decimal', value: tp.amount || '', placeholder: '金额', style: 'width:92px;flex:0 0 auto' });
+        amt.addEventListener('input', () => { tpls[i].amount = Number(amt.value) || 0; });
+        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { tpls.splice(i, 1); renderTpls(); } }, '×');
+        row.appendChild(nm); row.appendChild(amt); row.appendChild(del);
+        tplList2.appendChild(row);
+      });
+    }
+    renderTpls();
+    tplCard2.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { tpls.push({ id: uid(), name: '', type: 'expense', amount: 0, category: '', note: '' }); renderTpls(); } }, '+ 添加模板'));
+    tplCard2.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+      const cleaned = tpls.filter((x) => (x.name || '').trim()).map((x) => ({
+        id: x.id || uid(), name: x.name.trim(), type: x.type || 'expense',
+        amount: Number(x.amount) || 0, category: x.category || '', note: x.note || ''
+      }));
+      Meta.set('txTemplates', cleaned).then(() => toast('已保存模板'));
+    } }, '保存模板'));
+  });
+  wrap.appendChild(tplCard2);
 
   wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:18px' }, '关于'));
   wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:13px;line-height:1.7' },
@@ -1091,155 +1564,265 @@ function projectForm(existing) {
   openModal(isEdit ? '编辑项目' : '新建项目', f, [cancel, save]);
 }
 
-// ---------- 表单：记账 ----------
-async function txForm(presetType, presetProject, existingTx) {
+// ---------- 表单：记账（对齐参考：大金额+拍照、字段行式、二级分类、账户、成员/商家、时间到分、转账） ----------
+async function txForm(presetType, presetProject, existingTx, preset) {
   const isEdit = !!existingTx;
-  let type = presetType || (existingTx && existingTx.type) || 'income';
-  const projects = await Projects.all();
-  const parties = await Parties.all();
+  let type = presetType || (existingTx && existingTx.type) || (preset && preset.type) || 'expense';
+  const [projects, parties, accounts, catTree] = await Promise.all([
+    Projects.all(), Parties.all(), getAccounts(), getCatTree()
+  ]);
 
   const f = h('div');
-  const seg = h('div', { class: 'seg' });
-  const bIn = h('button', { class: type === 'income' ? 'on' : '', onclick: () => { type = 'income'; bIn.classList.add('on'); bEx.classList.remove('on'); toggleType(); } }, '收款');
-  const bEx = h('button', { class: type === 'expense' ? 'on' : '', onclick: () => { type = 'expense'; bEx.classList.add('on'); bIn.classList.remove('on'); toggleType(); } }, '支出');
-  seg.appendChild(bIn); seg.appendChild(bEx);
-  f.appendChild(h('div', { class: 'field' }, [h('label', {}, '类型'), seg]));
+  const seg = h('div', { class: 'seg', style: 'margin-bottom:14px' });
+  const bEx = h('button', { class: type === 'expense' ? 'on' : '', onclick: () => setType('expense') }, '支出');
+  const bIn = h('button', { class: type === 'income' ? 'on' : '', onclick: () => setType('income') }, '收入');
+  const bTr = h('button', { class: type === 'transfer' ? 'on' : '', onclick: () => setType('transfer') }, '转账');
+  seg.appendChild(bEx); seg.appendChild(bIn); seg.appendChild(bTr);
+  f.appendChild(seg);
 
-  const projSel = h('select', {}, [h('option', { value: '' }, '请选择项目')].concat(projects.map((p) => h('option', { value: p.id }, p.name))));
-  if (presetProject) projSel.value = presetProject;
-  field(f, '所属项目', projSel);
-
-  // 动态区
-  const dyn = h('div');
-  f.appendChild(dyn);
-
-  let planSel = null;
-  async function refillPlan(forceValue) {
-    if (!planSel) return;
-    planSel.innerHTML = '';
-    planSel.appendChild(h('option', { value: '' }, '不计入计划/未选'));
-    const pid = projSel.value;
-    if (pid) {
-      const pp = await Projects.get(pid);
-      ((pp && pp.planItems) || []).forEach((it) => {
-        planSel.appendChild(h('option', { value: it.id }, it.cat + (it.amount ? '（计划' + it.amount + '）' : '')));
-      });
-    }
-    if (forceValue) planSel.value = forceValue;
-  }
-
-  function toggleType() {
-    dyn.innerHTML = '';
-    if (type === 'income') {
-      planSel = null;
-      const sub = h('select', {}, INCOME_TYPES.map((x) => h('option', {}, x)));
-      field(dyn, '款项类型', sub); dyn._sub = sub;
-      const inv = h('select', {}, [h('option', {}, '未开'), h('option', {}, '已开')]);
-      field(dyn, '开票状态', inv); dyn._inv = inv;
-      const invType = h('select', {}, [h('option', {}, '普票'), h('option', {}, '专票'), h('option', {}, '—')]);
-      field(dyn, '发票类型', invType); dyn._invType = invType;
-      const tax = h('input', { type: 'number', inputmode: 'decimal', placeholder: '选填' });
-      field(dyn, '税额（元）', tax); dyn._tax = tax;
-    } else {
-      const cat = h('select', {}, EXPENSE_CATS.map((x) => h('option', {}, x)));
-      field(dyn, '支出类别', cat); dyn._cat = cat;
-      const partySel = h('select', {}, [h('option', { value: '' }, '选择往来单位')].concat(parties.map((p) => h('option', { value: p.id }, p.name))));
-      field(dyn, '往来单位', partySel); dyn._partySel = partySel;
-      const partyNew = h('input', { placeholder: '或手动填写新单位名称' });
-      field(dyn, '（或）新建往来单位', partyNew); dyn._partyNew = partyNew;
-      const region = h('select', {}, [h('option', {}, '—')].concat(REGIONS.map((x) => h('option', {}, x))));
-      field(dyn, '施工区域', region); dyn._region = region;
-      const trade = h('select', {}, [h('option', {}, '—')].concat(TRADES.map((x) => h('option', {}, x))));
-      field(dyn, '工种', trade); dyn._trade = trade;
-      const material = h('input', { placeholder: '如：瓷砖/电线/腻子' });
-      field(dyn, '材料大类', material); dyn._material = material;
-      planSel = h('select', {}, [h('option', { value: '' }, '不计入计划/未选')]);
-      field(dyn, '预算内计划类别', planSel); dyn._planSel = planSel;
-      if (!isEdit) refillPlan();
-      projSel.addEventListener('change', () => refillPlan());
-    }
-    // 金额、日期、方式、备注、照片（共用）
-    const amount = h('input', { type: 'number', inputmode: 'decimal', placeholder: '0.00' });
-    field(dyn, '金额（元）', amount); dyn._amount = amount;
-    const date = h('input', { type: 'date', value: today() });
-    field(dyn, '日期', date); dyn._date = date;
-    const method = h('select', {}, PAY_METHODS.map((x) => h('option', {}, x)));
-    field(dyn, '收付方式', method); dyn._method = method;
-    const note = h('textarea', {}, '');
-    field(dyn, '备注', note); dyn._note = note;
-    // 照片
-    const fileInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment' });
-    const thumb = h('img', { class: 'thumb', style: 'display:none;margin-top:8px' });
-    let photoFile = null;
-    fileInput.addEventListener('change', (e) => {
-      const fl = e.target.files[0];
-      if (fl) { photoFile = fl; thumb.src = URL.createObjectURL(fl); thumb.style.display = 'block'; keepAttachId = null; }
-    });
-    field(dyn, '凭证照片', h('div', {}, [fileInput, thumb])); dyn._photoFile = () => photoFile;
-  }
-
+  // ---- 金额大字 + 拍照 ----
+  const amount = h('input', { class: 'amt-input', type: 'number', inputmode: 'decimal', placeholder: '0.00' });
+  const fileInp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
+  const thumb = h('img', { class: 'thumb', style: 'display:none;margin-top:6px' });
+  let photoFile = null;
   let keepAttachId = isEdit ? (existingTx.attachmentId || null) : null;
-  toggleType();
+  fileInp.addEventListener('change', (e) => {
+    const fl = e.target.files[0];
+    if (fl) { photoFile = fl; thumb.src = URL.createObjectURL(fl); thumb.style.display = 'block'; keepAttachId = null; }
+  });
+  const camBtn = h('button', { class: 'cam-btn', onclick: () => fileInp.click() }, '📷 拍照');
+  f.appendChild(h('div', { class: 'amount-box' }, [
+    h('div', { class: 'amount-wrap' }, [h('span', { class: 'amt-cur' }, '¥'), amount]),
+    h('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:6px' }, [camBtn, fileInp, thumb])
+  ]));
 
-  // 预填（编辑模式）
-  if (isEdit) {
-    projSel.value = existingTx.projectId || '';
-    // type 已在初始化时为 existingTx.type，字段已按此构建
-    if (type === 'income') {
-      dyn._sub.value = existingTx.subType || INCOME_TYPES[0];
-      dyn._inv.value = existingTx.invoiceStatus || '未开';
-      dyn._invType.value = existingTx.invoiceType || '普票';
-      dyn._tax.value = existingTx.taxAmount || '';
-    } else {
-      dyn._cat.value = existingTx.category || EXPENSE_CATS[0];
-      dyn._partySel.value = existingTx.partyId || '';
-      dyn._region.value = existingTx.region || '—';
-      dyn._trade.value = existingTx.trade || '—';
-      dyn._material.value = existingTx.material || '';
-      await refillPlan(existingTx.planCat || '');
-    }
-    dyn._amount.value = existingTx.amount || '';
-    dyn._date.value = fmtDate(existingTx.date) || today();
-    dyn._method.value = existingTx.method || PAY_METHODS[0];
-    dyn._note.value = existingTx.note || '';
-    if (keepAttachId) {
-      const url = await attURL(keepAttachId);
-      if (url) {
-        const thumb = dyn.querySelector('img.thumb');
-        if (thumb) { thumb.src = url; thumb.style.display = 'block'; }
-      }
-    }
+  // ---- 字段行区 ----
+  const rows = h('div', { class: 'rows' });
+  f.appendChild(rows);
+
+  let projSel, catSel, subSel, acctSel, memberSel, merchSel, dtSel, noteSel;
+  let subTypeSel, invSel, invTypeSel, taxSel, fromSel, toSel, planSel, regionSel, tradeSel, matSel, newPartySel;
+  let actBox = null;
+
+  function sel(options, value) {
+    const s = h('select', { class: 'ctl' }, options);
+    if (value != null) s.value = value;
+    return s;
+  }
+  function row(icon, label, ctrl, onClear, extra) {
+    const right = h('div', { class: 'frow-r' }, [ctrl]);
+    if (extra) right.appendChild(extra);
+    if (onClear) right.appendChild(h('button', { class: 'frow-x', title: '清除', onclick: onClear }, '×'));
+    return h('div', { class: 'frow' }, [
+      h('div', { class: 'frow-l' }, [h('span', { class: 'frow-ic' }, icon), h('span', { class: 'frow-k' }, label)]),
+      right
+    ]);
+  }
+  function accOptions() {
+    return [h('option', { value: '' }, '未选账户')].concat(accounts.map((a) => h('option', { value: a.name }, a.name)));
+  }
+  function partyOptions(list, emptyLabel) {
+    return [h('option', { value: '' }, emptyLabel)].concat(list.map((p) => h('option', { value: p.id }, p.name)));
+  }
+  function dtValue(t) {
+    const d = fmtDate(t && t.date) || today();
+    const tm = (t && t.time) || nowHm();
+    return d + 'T' + tm;
+  }
+  function micBtn(target) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return h('button', { class: 'mic-btn', title: '语音输入', onclick: () => toast('当前浏览器不支持语音输入') }, '🎤');
+    const b = h('button', { class: 'mic-btn', title: '语音输入', onclick: () => {
+      try {
+        const rec = new SR();
+        rec.lang = 'zh-CN'; rec.interimResults = false; rec.maxAlternatives = 1;
+        b.textContent = '●'; b.classList.add('on');
+        rec.onresult = (ev) => {
+          const txt = ev.results[0][0].transcript;
+          target.value = (target.value ? target.value + ' ' : '') + txt;
+        };
+        rec.onerror = () => toast('语音识别失败');
+        rec.onend = () => { b.textContent = '🎤'; b.classList.remove('on'); };
+        rec.start();
+      } catch (e) { toast('语音识别启动失败'); }
+    } }, '🎤');
+    return b;
+  }
+  function setType(t) {
+    type = t;
+    bEx.classList.toggle('on', t === 'expense');
+    bIn.classList.toggle('on', t === 'income');
+    bTr.classList.toggle('on', t === 'transfer');
+    buildRows();
+    if (actBox) buildActs();
   }
 
-  const save = h('button', { class: 'btn primary', onclick: async () => {
+  function buildRows() {
+    rows.innerHTML = '';
+    // 旧数据兼容：老支出记录的往来单位没有区分成员/商家，编辑时按类型回填
+    const oldParty = isEdit ? parties.find((x) => x.id === existingTx.partyId) : null;
+    const oldIsMember = !!oldParty && ['worker', 'manager', 'designer'].indexOf(oldParty.type) >= 0;
+    const oldIsMerch = !!oldParty && (oldParty.type === 'supplier' || oldParty.type === 'other');
+
+    projSel = sel([h('option', { value: '' }, '请选择项目')].concat(projects.map((p) => h('option', { value: p.id }, p.name))),
+      isEdit ? (existingTx.projectId || '') : (presetProject || ''));
+    rows.appendChild(row('📁', '项目', projSel, () => { projSel.value = ''; }));
+
+    if (type === 'transfer') {
+      fromSel = sel(accOptions(), isEdit ? (existingTx.fromAccount || '') : '');
+      toSel = sel(accOptions(), isEdit ? (existingTx.toAccount || '') : '');
+      rows.appendChild(row('💳', '转出账户', fromSel, () => { fromSel.value = ''; }));
+      rows.appendChild(row('💰', '转入账户', toSel, () => { toSel.value = ''; }));
+      dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
+      rows.appendChild(row('🕐', '时间', dtSel));
+      noteSel = h('textarea', { class: 'ctl', rows: 2 }, isEdit ? (existingTx.note || '') : ((preset && preset.note) || ''));
+      rows.appendChild(row('📝', '备注', noteSel, null, micBtn(noteSel)));
+      return;
+    }
+
+    if (type === 'income') {
+      subTypeSel = sel(INCOME_TYPES.map((x) => h('option', {}, x)), isEdit ? (existingTx.subType || INCOME_TYPES[0]) : INCOME_TYPES[0]);
+      rows.appendChild(row('📌', '款项类型', subTypeSel));
+      const clients = parties.filter((p) => p.type === 'client');
+      memberSel = sel(partyOptions(clients, '选择客户'), isEdit ? (existingTx.partyId || '') : '');
+      rows.appendChild(row('👤', '客户', memberSel, () => { memberSel.value = ''; }));
+      acctSel = sel(accOptions(), isEdit ? (existingTx.account || existingTx.method || '') : '');
+      rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }));
+      invSel = sel([h('option', {}, '未开'), h('option', {}, '已开')], isEdit ? (existingTx.invoiceStatus || '未开') : '未开');
+      rows.appendChild(row('🧾', '开票状态', invSel));
+      invTypeSel = sel([h('option', {}, '普票'), h('option', {}, '专票'), h('option', {}, '—')], isEdit ? (existingTx.invoiceType || '普票') : '普票');
+      rows.appendChild(row('📄', '发票类型', invTypeSel));
+      taxSel = h('input', { class: 'ctl', type: 'number', inputmode: 'decimal', placeholder: '选填' });
+      taxSel.value = isEdit && existingTx.taxAmount ? existingTx.taxAmount : '';
+      rows.appendChild(row('💴', '税额（元）', taxSel, () => { taxSel.value = ''; }));
+      dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
+      rows.appendChild(row('🕐', '时间', dtSel));
+      noteSel = h('textarea', { class: 'ctl', rows: 2 }, isEdit ? (existingTx.note || '') : ((preset && preset.note) || ''));
+      rows.appendChild(row('📝', '备注', noteSel, null, micBtn(noteSel)));
+      return;
+    }
+
+    // 支出
+    const firstCat = catTree.length ? catTree[0].name : '材料费';
+    catSel = sel(catTree.map((c) => h('option', { value: c.name }, c.name)), isEdit ? (existingTx.category || firstCat) : ((preset && preset.category) || firstCat));
+    subSel = sel([]);
+    function fillSubs() {
+      const c = catTree.find((x) => x.name === catSel.value);
+      const subs = (c && c.subs) || [];
+      subSel.innerHTML = '';
+      subSel.appendChild(h('option', { value: '' }, '（不选）'));
+      subs.forEach((s) => subSel.appendChild(h('option', { value: s.name }, s.name)));
+      if (isEdit && existingTx.subCat) subSel.value = existingTx.subCat;
+    }
+    fillSubs();
+    catSel.addEventListener('change', fillSubs);
+    const catWrap = h('div', { class: 'ctl-row' }, [catSel, h('span', { class: 'ctl-sep' }, '＞'), subSel]);
+    rows.appendChild(row('🗂', '分类', catWrap, () => { catSel.value = ''; subSel.value = ''; }));
+
+    acctSel = sel(accOptions(), isEdit ? (existingTx.account || existingTx.method || '') : '');
+    rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }));
+
+    const members = parties.filter((p) => ['worker', 'manager', 'designer'].indexOf(p.type) >= 0);
+    memberSel = sel(partyOptions(members, '选择成员'), isEdit ? (existingTx.memberId || (oldIsMember ? oldParty.id : '')) : '');
+    rows.appendChild(row('👷', '成员', memberSel, () => { memberSel.value = ''; }));
+
+    const merchs = parties.filter((p) => p.type === 'supplier' || p.type === 'other');
+    merchSel = sel(partyOptions(merchs, '选择商家'), isEdit ? (existingTx.merchantId || (oldIsMerch ? oldParty.id : '')) : '');
+    rows.appendChild(row('🏪', '商家', merchSel, () => { merchSel.value = ''; }));
+
+    newPartySel = h('input', { class: 'ctl', placeholder: '或新建往来单位名称' });
+    rows.appendChild(row('➕', '新建单位', newPartySel));
+
+    regionSel = sel([h('option', {}, '—')].concat(REGIONS.map((x) => h('option', {}, x))), isEdit ? (existingTx.region || '—') : '—');
+    rows.appendChild(row('📍', '施工区域', regionSel));
+    tradeSel = sel([h('option', {}, '—')].concat(TRADES.map((x) => h('option', {}, x))), isEdit ? (existingTx.trade || '—') : '—');
+    rows.appendChild(row('🛠', '工种', tradeSel));
+    matSel = h('input', { class: 'ctl', placeholder: '如：瓷砖/电线/腻子' });
+    matSel.value = isEdit ? (existingTx.material || '') : '';
+    rows.appendChild(row('📦', '材料大类', matSel));
+
+    planSel = sel([h('option', { value: '' }, '不计入计划/未选')]);
+    async function fillPlan() {
+      planSel.innerHTML = '';
+      planSel.appendChild(h('option', { value: '' }, '不计入计划/未选'));
+      const pid = projSel.value;
+      if (pid) {
+        const pp = await Projects.get(pid);
+        ((pp && pp.planItems) || []).forEach((it) => {
+          planSel.appendChild(h('option', { value: it.id }, it.cat + (it.amount ? '（计划' + it.amount + '）' : '')));
+        });
+      }
+      if (isEdit && existingTx.planCat) planSel.value = existingTx.planCat;
+    }
+    fillPlan();
+    projSel.addEventListener('change', fillPlan);
+    rows.appendChild(row('🧮', '预算计划', planSel, () => { planSel.value = ''; }));
+
+    dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
+    rows.appendChild(row('🕐', '时间', dtSel));
+    noteSel = h('textarea', { class: 'ctl', rows: 2 }, isEdit ? (existingTx.note || '') : ((preset && preset.note) || ''));
+    rows.appendChild(row('📝', '备注', noteSel, null, micBtn(noteSel)));
+  }
+
+  buildRows();
+  amount.value = isEdit ? (existingTx.amount || '') : ((preset && preset.amount) || '');
+
+  if (keepAttachId) {
+    const url = await attURL(keepAttachId);
+    if (url) { thumb.src = url; thumb.style.display = 'block'; }
+  }
+
+  const doSave = async () => {
     const pid = projSel.value;
     if (!pid) { toast('请先选择项目'); return; }
-    const amount = Number(dyn._amount.value);
-    if (!amount || amount <= 0) { toast('请输入正确金额'); return; }
+    const amt = Number(amount.value);
+    if (!amt || amt <= 0) { toast('请输入正确金额'); return; }
     const t = {
       id: isEdit ? existingTx.id : uid(),
       projectId: pid, type,
-      amount, date: dyn._date.value || today(),
-      method: dyn._method.value, note: dyn._note.value.trim(),
+      amount: amt,
+      date: dtSel.value ? dtSel.value.slice(0, 10) : today(),
+      time: dtSel.value ? dtSel.value.slice(11, 16) : '',
+      note: noteSel ? noteSel.value.trim() : '',
       createdAt: isEdit ? (existingTx.createdAt || Date.now()) : Date.now()
     };
-    if (type === 'income') {
-      t.subType = dyn._sub.value; t.invoiceStatus = dyn._inv.value; t.invoiceType = dyn._invType.value; t.taxAmount = Number(dyn._tax.value) || 0;
+    if (type === 'transfer') {
+      if (!fromSel.value || !toSel.value) { toast('请选择转出与转入账户'); return; }
+      if (fromSel.value === toSel.value) { toast('转出与转入账户不能相同'); return; }
+      t.fromAccount = fromSel.value; t.toAccount = toSel.value;
+      t.account = fromSel.value; t.method = fromSel.value;
+    } else if (type === 'income') {
+      t.subType = subTypeSel.value;
+      t.invoiceStatus = invSel.value; t.invoiceType = invTypeSel.value;
+      t.taxAmount = Number(taxSel.value) || 0;
+      t.account = acctSel.value; t.method = acctSel.value;
+      let cid = memberSel.value;
+      if (!cid && isEdit && existingTx.partyId) cid = existingTx.partyId;
+      const cp = parties.find((x) => x.id === cid);
+      t.partyId = cid || '';
+      t.partyName = cp ? cp.name : (isEdit ? (existingTx.partyName || '') : '');
     } else {
-      t.category = dyn._cat.value;
-      let partyName = '', partyId = dyn._partySel.value;
-      const newName = dyn._partyNew.value.trim();
+      t.category = catSel.value; t.subCat = subSel.value;
+      t.account = acctSel.value; t.method = acctSel.value;
+      t.region = regionSel.value; t.trade = tradeSel.value; t.material = matSel.value.trim();
+      t.planCat = planSel ? planSel.value : '';
+      const mid = memberSel.value, sid = merchSel.value;
+      const mp = parties.find((x) => x.id === mid);
+      const sp = parties.find((x) => x.id === sid);
+      t.memberId = mid || ''; t.memberName = mp ? mp.name : '';
+      t.merchantId = sid || ''; t.merchantName = sp ? sp.name : '';
+      let partyId = sid || mid || '';
+      let partyName = sp ? sp.name : (mp ? mp.name : '');
+      const newName = newPartySel.value.trim();
       if (newName) {
         const np = { id: uid(), name: newName, type: 'supplier', createdAt: Date.now() };
         await Parties.save(np); partyId = np.id; partyName = newName;
-      } else if (partyId) {
-        const pp = parties.find((x) => x.id === partyId); partyName = pp ? pp.name : '';
+      } else if (!partyId && isEdit && existingTx.partyId) {
+        partyId = existingTx.partyId; partyName = existingTx.partyName || '';
       }
       t.partyId = partyId; t.partyName = partyName;
-      t.region = dyn._region.value; t.trade = dyn._trade.value; t.material = dyn._material.value.trim();
-      t.planCat = dyn._planSel ? dyn._planSel.value : '';
     }
-    const pf = dyn._photoFile();
+    const pf = photoFile;
     if (pf) {
       if (isEdit && existingTx.attachmentId) Attachments.remove(existingTx.attachmentId);
       t.attachmentId = await Attachments.save(pf, pf.type);
@@ -1247,9 +1830,29 @@ async function txForm(presetType, presetProject, existingTx) {
       t.attachmentId = keepAttachId;
     }
     Transactions.save(t).then(() => { closeModal(); toast(isEdit ? '已更新' : '已记录'); render(); });
-  } }, isEdit ? '保存修改' : '保存');
-  const cancel = h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消');
-  openModal(isEdit ? '编辑记账' : '记一笔', f, [cancel, save]);
+  };
+
+  const save = h('button', { class: 'btn primary', onclick: doSave }, isEdit ? '保存修改' : '保存');
+  actBox = h('div', { style: 'display:flex;flex-direction:column;gap:10px;width:100%' });
+  function buildActs() {
+    actBox.innerHTML = '';
+    actBox.appendChild(save);
+    const subBtns = [];
+    if (type !== 'transfer') {
+      subBtns.push(h('button', { class: 'btn ghost', onclick: () => { setType('transfer'); toast('已切换为转账，请选择转出/转入账户'); } }, '改为转账'));
+    }
+    if (isEdit) {
+      subBtns.push(h('button', { class: 'btn danger', onclick: () => {
+        confirmDialog('删除这笔记账？', () => {
+          Transactions.remove({ id: existingTx.id, attachmentId: existingTx.attachmentId })
+            .then(() => { toast('已删除'); render(); });
+        }, '删除');
+      } }, '删除'));
+    }
+    if (subBtns.length) actBox.appendChild(h('div', { style: 'display:flex;gap:10px' }, subBtns));
+  }
+  buildActs();
+  openModal(isEdit ? '编辑记账' : '记一笔', f, [actBox]);
 }
 
 // ---------- 表单：往来单位 ----------
@@ -1374,7 +1977,7 @@ function init() {
   });
   window.addEventListener('hashchange', render);
   if (!location.hash) location.hash = '#/home';
-  render();
+  Meta.get('hideMoney', false).then((v) => { state.hideMoney = !!v; render(); }, () => render());
 }
 
 init();

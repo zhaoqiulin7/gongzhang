@@ -35,6 +35,7 @@ const html =
 '  <main id="view"></main>\n' +
 '  <nav id="tabbar">\n' +
 '    <button class="tab" data-route="home">首页</button>\n' +
+'    <button class="tab" data-route="ledger">流水</button>\n' +
 '    <button class="tab" data-route="projects">项目</button>\n' +
 '    <button class="tab" data-route="parties">往来</button>\n' +
 '    <button class="tab" data-route="settings">设置</button>\n' +

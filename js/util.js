@@ -45,6 +45,59 @@ export function fmtDate(iso) {
   return String(iso).slice(0, 10);
 }
 
+// 2026-10-15 19:33
+export function fmtDateTime(iso, tm) {
+  const d = fmtDate(iso);
+  if (!d) return '';
+  return tm ? d + ' ' + tm : d;
+}
+
+// 10月15日
+export function fmtMD(iso) {
+  if (!iso) return '';
+  const p = String(iso).slice(0, 10).split('-');
+  if (p.length < 3) return String(iso);
+  return Number(p[1]) + '月' + Number(p[2]) + '日';
+}
+
+const WEEK_CN = ['日', '一', '二', '三', '四', '五', '六'];
+export function weekdayCN(iso) {
+  if (!iso) return '';
+  const p = String(iso).slice(0, 10).split('-').map(Number);
+  if (p.length < 3) return '';
+  const d = new Date(p[0], p[1] - 1, p[2]);
+  return '周' + WEEK_CN[d.getDay()];
+}
+
+export function pad2(n) { return String(n).padStart(2, '0'); }
+export function ymd(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+export function nowHm() { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+
+// 时间维度区间：今天 / 本周 / 本月 / 本季度 / 本年 / 全部
+export function timeRanges(ref) {
+  const now = ref ? new Date(ref) : new Date();
+  const y = now.getFullYear(), m = now.getMonth(), q = Math.floor(m / 3);
+  const dow = (now.getDay() + 6) % 7; // 周一为一周起点
+  const sWeek = new Date(y, m, now.getDate() - dow);
+  const eWeek = new Date(y, m, now.getDate() - dow + 6);
+  const sMonth = new Date(y, m, 1);
+  const eMonth = new Date(y, m + 1, 0);
+  const sQ = new Date(y, q * 3, 1);
+  const eQ = new Date(y, q * 3 + 3, 0);
+  return [
+    { key: 'day', label: '今天', sub: ymd(now), from: ymd(now), to: ymd(now) },
+    { key: 'week', label: '本周', sub: ymd(sWeek) + ' - ' + ymd(eWeek), from: ymd(sWeek), to: ymd(eWeek) },
+    { key: 'month', label: '本月', sub: (m + 1) + '月1日 - ' + (m + 1) + '月' + eMonth.getDate() + '日', from: ymd(sMonth), to: ymd(eMonth) },
+    { key: 'quarter', label: '本季度', sub: y + '年' + (q * 3 + 1) + '月 - ' + (q * 3 + 3) + '月', from: ymd(sQ), to: ymd(eQ) },
+    { key: 'year', label: '本年', sub: y + '年1月1日 - 12月31日', from: y + '-01-01', to: y + '-12-31' },
+    { key: 'all', label: '全部时间', sub: '全部记录', from: '0000-01-01', to: '9999-12-31' }
+  ];
+}
+export function rangeOf(key, ref) {
+  const r = timeRanges(ref).find((x) => x.key === key) || timeRanges(ref)[2];
+  return r;
+}
+
 export function today() {
   const d = new Date();
   const p = (x) => String(x).padStart(2, '0');
