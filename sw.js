@@ -1,4 +1,4 @@
-const CACHE = 'decor-accounting-v16';
+const CACHE = 'decor-accounting-v17';
 const ASSETS = [
   './',
   './index.html',

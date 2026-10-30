@@ -42,7 +42,7 @@ const html =
 '    <button class="tab" data-route="ledger">流水</button>\n' +
 '    <button class="tab" data-route="projects">项目</button>\n' +
 '    <button class="tab" data-route="recon">对账</button>\n' +
-'    <button class="tab" data-route="settings">设置</button>\n' +
+'    <button class="tab" data-route="mine">我的</button>\n' +
 '  </nav>\n' +
 '</div>\n' +
 '<div id="toast" class="toast"></div>\n' +

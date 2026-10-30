@@ -13,7 +13,7 @@ const state = {
   ledgerProject: 'all', ledgerQ: '', ledgerSort: 'date',
   ledgerBatch: false, ledgerSel: {},
   statsRange: 'year', statsDim: 'project',
-  reconStatus: 'all'
+  reconStatus: 'all', ledgerCustom: null
 };
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
@@ -258,6 +258,7 @@ async function render() {
   if (route === 'projects') node = await projectsView();
   else if (route === 'recon') node = await reconView();
   else if (route === 'parties') node = await partiesView();
+  else if (route === 'mine') node = await mineView();
   else if (route === 'settings') node = await settingsView();
   else if (route === 'stats') node = await statsView();
   else if (route === 'ledger') {
@@ -334,12 +335,12 @@ async function homeView() {
   timeRangeSummary(txs).forEach((it) => {
     timeCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/ledger/' + it.r.key; } }, [
       h('div', { style: 'flex:1;min-width:0' }, [
-        h('div', { style: 'font-weight:600;font-size:14px' }, it.r.label),
+        h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, it.r.label),
         h('div', { class: 'meta' }, it.r.sub)
       ]),
       h('div', { class: 'tr-r' }, [
         h('div', { class: 'amt expense' }, '-' + M(it.expense)),
-        h('div', { class: 'amt income', style: 'font-size:13px' }, '+' + M(it.income))
+        h('div', { class: 'amt income', style: 'font-size:var(--g-fs-md)' }, '+' + M(it.income))
       ]),
       h('span', { class: 'chev' }, '›')
     ]));
@@ -361,14 +362,14 @@ async function homeView() {
       const pd = projects.find((x) => x.id === r.projectId);
       dueCard.appendChild(h('div', { class: 'tr-row', onclick: () => { if (pd) location.hash = '#/project/' + pd.id; else toast('该节点所属项目已删除'); } }, [
         h('div', { style: 'flex:1;min-width:0' }, [
-          h('div', { style: 'font-weight:600;font-size:14px' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
             h('span', { class: 'tag ' + (r.kind === 'receive' ? 'paid' : 'unpaid'), style: 'margin-right:6px' }, r.kind === 'receive' ? '收' : '付'),
             document.createTextNode(r.title || '未命名节点')
           ]),
           h('div', { class: 'meta' }, (pd ? pd.name : '未关联项目') + ' · 约定 ' + fmtDate(r.dueDate) + (overdue ? ' · 已逾期' + Math.round((new Date(td) - new Date(r.dueDate)) / 864e5) + '天' : ''))
         ]),
         h('div', { class: 'tr-r' }, [
-          h('div', { class: 'amt ' + (r.kind === 'receive' ? 'income' : 'expense'), style: r.amount ? '' : 'font-size:13px;color:var(--muted)' }, r.amount ? M(r.amount) : (overdue ? '⚠️ 逾期' : '待办'))
+          h('div', { class: 'amt ' + (r.kind === 'receive' ? 'income' : 'expense'), style: r.amount ? '' : 'font-size:var(--g-fs-md);color:var(--muted)' }, r.amount ? M(r.amount) : (overdue ? '⚠️ 逾期' : '待办'))
         ]),
         h('span', { class: 'chev' }, '›')
       ]));
@@ -386,7 +387,7 @@ async function homeView() {
       sw2.slice(0, 10).forEach((w) => {
         sCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
           h('div', { style: 'flex:1;min-width:0' }, [
-            h('div', { style: 'font-weight:600;font-size:14px' }, [
+            h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
               h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '逾期' : '临近'),
               document.createTextNode(w.p.name)
             ]),
@@ -395,7 +396,7 @@ async function homeView() {
           h('span', { class: 'chev' }, '›')
         ]));
       });
-      if (sw2.length > 10) sCard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;padding:8px 0 2px' }, '还有 ' + (sw2.length - 10) + ' 条，进项目详情查看'));
+      if (sw2.length > 10) sCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);padding:8px 0 2px' }, '还有 ' + (sw2.length - 10) + ' 条，进项目详情查看'));
       wrap.appendChild(sCard);
     }
   } catch (e) { /* 工期预警失败不影响首页 */ }
@@ -411,19 +412,19 @@ async function homeView() {
         const pct = Math.min(100, Math.round(w.ratio * 100));
         const row = h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
           h('div', { style: 'flex:1;min-width:0' }, [
-            h('div', { style: 'font-weight:600;font-size:14px' }, [
+            h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
               h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '超支' : '接近'),
               document.createTextNode(w.p.name)
             ]),
             h('div', { class: 'meta' }, w.msg),
             h('div', { class: 'bar', style: 'margin-top:5px' }, [h('div', { class: 'bar-fill' + (w.level === 'over' ? ' over' : ''), style: 'width:' + pct + '%' })])
           ]),
-          h('div', { style: 'font-weight:700;font-size:13px;color:' + (w.level === 'over' ? 'var(--danger)' : 'var(--accent)') }, pct + '%'),
+          h('div', { style: 'font-weight:700;font-size:var(--g-fs-md);color:' + (w.level === 'over' ? 'var(--danger)' : 'var(--accent)') }, pct + '%'),
           h('span', { class: 'chev' }, '›')
         ]);
         wCard.appendChild(row);
       });
-      if (warns.length > 10) wCard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;padding:8px 0 2px' }, '还有 ' + (warns.length - 10) + ' 条预警，进项目详情查看'));
+      if (warns.length > 10) wCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);padding:8px 0 2px' }, '还有 ' + (warns.length - 10) + ' 条预警，进项目详情查看'));
       wrap.appendChild(wCard);
     }
   } catch (e) { /* 预警计算失败不影响首页 */ }
@@ -471,7 +472,7 @@ async function homeView() {
     wrap.appendChild(emptyState('没有符合条件的项目', '调整筛选或点右下角 + 新建'));
   } else {
     const sum = withStats.reduce((acc, o) => { acc.i += o.s.income; acc.e += o.s.expense; return acc; }, { i: 0, e: 0 });
-    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-2px 0 10px' },
+    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-2px 0 10px' },
       '当前筛选合计：收 ' + M(sum.i) + ' · 支 ' + M(sum.e) + ' · 利润 ' + M(sum.i - sum.e)));
     withStats.forEach(({ p, s }) => wrap.appendChild(projectCard(p, s)));
   }
@@ -508,7 +509,7 @@ function emptyState(title, sub) {
   return h('div', { class: 'empty' }, [
     h('div', { class: 'big' }, '📭'),
     h('div', {}, title),
-    h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, sub)
+    h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' }, sub)
   ]);
 }
 
@@ -520,22 +521,22 @@ function projectCard(p, stats) {
       document.createTextNode(p.name || '未命名项目'),
       h('span', { class: 'tag ' + (STATUS_MAP[p.status] || {}).cls }, (STATUS_MAP[p.status] || {}).label || '进行中')
     ]),
-    h('div', { class: 'muted', style: 'font-size:12px' }, p.clientName || '')
+    h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, p.clientName || '')
   ]));
 
   const stageName = currentStageName(p);
   card.appendChild(h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center' }, [
     h('span', { class: 'tag stage' }, stageName || '未排期'),
-    h('span', { class: 'muted', style: 'font-size:12px' }, '开工 ' + (p.startDate ? fmtDate(p.startDate) : '—'))
+    h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '开工 ' + (p.startDate ? fmtDate(p.startDate) : '—'))
   ]));
 
   const body = h('div', { style: 'margin-top:8px;display:flex;gap:14px;flex-wrap:wrap' });
-  body.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, p.contractAmount ? '合同 ' + M(p.contractAmount) : '合同 —'));
-  if (st.count != null) body.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, st.count + ' 笔'));
+  body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, p.contractAmount ? '合同 ' + M(p.contractAmount) : '合同 —'));
+  if (st.count != null) body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, st.count + ' 笔'));
   card.appendChild(body);
 
   card.appendChild(h('div', { class: 'row-between', style: 'margin-top:10px' }, [
-    h('div', { class: 'muted', style: 'font-size:12px' }, '收 ' + M(st.income) + ' · 支 ' + M(st.expense)),
+    h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '收 ' + M(st.income) + ' · 支 ' + M(st.expense)),
     h('div', { style: 'font-weight:700;color:var(--accent)' }, '结余 ' + M(st.profit))
   ]));
 
@@ -560,7 +561,11 @@ async function ledgerView() {
 
   // ---- 筛选 ----
   const ranges = timeRanges();
-  const rg = ranges.find((r) => r.key === state.ledgerRange) || ranges[2];
+  let rg = ranges.find((r) => r.key === state.ledgerRange) || ranges[2];
+  // v1.9.0：自定义区间（统计页月度走势钻取进入）
+  if (state.ledgerRange === 'custom' && state.ledgerCustom) {
+    rg = { key: 'custom', label: state.ledgerCustom.label, sub: '', from: state.ledgerCustom.from, to: state.ledgerCustom.to };
+  }
   let list = txs.filter((t) => {
     const d = fmtDate(t.date);
     return d >= rg.from && d <= rg.to;
@@ -632,7 +637,7 @@ async function ledgerView() {
   // 时间粒度
   const pills = h('div', { class: 'pill-tabs' });
   ranges.forEach((r) => {
-    pills.appendChild(h('button', { class: 'pill' + (state.ledgerRange === r.key ? ' on' : ''), onclick: () => { state.ledgerRange = r.key; render(); } }, r.label));
+    pills.appendChild(h('button', { class: 'pill' + (state.ledgerRange === r.key ? ' on' : ''), onclick: () => { state.ledgerRange = r.key; state.ledgerCustom = null; render(); } }, r.label));
   });
   wrap.appendChild(pills);
 
@@ -734,7 +739,7 @@ async function ledgerView() {
       const yearCard = h('div', { class: 'card' });
       yearCard.appendChild(h('div', { class: 'row-between' }, [
         h('div', { style: 'font-weight:700' }, y + ' 年'),
-        h('div', { class: 'muted', style: 'font-size:12px' }, '结余 ' + M(yIn - yOut) + ' · 收 ' + M(yIn) + ' · 支 ' + M(yOut))
+        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '结余 ' + M(yIn - yOut) + ' · 收 ' + M(yIn) + ' · 支 ' + M(yOut))
       ]));
       wrap.appendChild(yearCard);
 
@@ -770,7 +775,7 @@ function ledgerRow(t, pname) {
     h('div', { class: 'tx-w' }, weekdayCN(t.date))
   ]);
   const textCol = h('div', { style: 'min-width:0;flex:1' }, [
-    h('div', { style: 'font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, title),
+    h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, title),
     h('div', { class: 'meta', style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, sub + (t.time ? ' ' + t.time : ''))
   ]);
   const left = h('div', { style: 'display:flex;gap:10px;align-items:center;min-width:0;flex:1' }, batch
@@ -827,7 +832,7 @@ function trendCard(txs) {
     ]));
   });
   card.appendChild(row);
-  card.appendChild(h('div', { class: 'muted', style: 'font-size:11px;margin-top:8px;text-align:center' }, '每列：左柱=收入 · 右柱=支出 · 底部数字为当月结余'));
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:8px;text-align:center' }, '每列：左柱=收入 · 右柱=支出 · 底部数字为当月结余'));
   return card;
 }
 
@@ -835,7 +840,7 @@ function trendCard(txs) {
 function batchBar(projects) {
   const ids = Object.keys(state.ledgerSel).filter((k) => state.ledgerSel[k]);
   const bar = h('div', { class: 'batch-bar' }, [
-    h('span', { style: 'flex:1;font-size:13px;font-weight:600' }, '已选 ' + ids.length + ' 笔'),
+    h('span', { style: 'flex:1;font-size:var(--g-fs-md);font-weight:600' }, '已选 ' + ids.length + ' 笔'),
     h('button', { class: 'btn sm ghost', disabled: ids.length ? undefined : 'true', style: ids.length ? '' : 'opacity:.5', onclick: () => { if (!ids.length) { toast('请先勾选流水'); return; } batchMove(ids, projects); } }, '改项目'),
     h('button', { class: 'btn sm danger', style: ids.length ? '' : 'opacity:.5', onclick: () => {
       if (!ids.length) { toast('请先勾选流水'); return; }
@@ -895,10 +900,10 @@ async function projectDetailView(id) {
 
   // 信息卡
   const info = h('div', { class: 'card' });
-  if (locked) info.appendChild(h('div', { style: 'background:rgba(47,129,247,.12);color:var(--accent);font-size:12px;padding:7px 10px;border-radius:8px;margin-bottom:10px' },
+  if (locked) info.appendChild(h('div', { style: 'background:rgba(47,129,247,.12);color:var(--accent);font-size:var(--g-fs-sm);padding:7px 10px;border-radius:8px;margin-bottom:10px' },
     '🔒 本项目已结算归档，内容为只读。如需修改，请点「编辑」把状态改回「进行中」。'));
   info.appendChild(h('div', { class: 'row-between' }, [
-    h('div', { style: 'font-weight:700;font-size:17px' }, p.name || '未命名'),
+    h('div', { style: 'font-weight:700;font-size:var(--g-fs-lg)' }, p.name || '未命名'),
     h('span', { class: 'tag ' + (STATUS_MAP[p.status] || {}).cls }, (STATUS_MAP[p.status] || {}).label || '进行中')
   ]));
   const fields = [
@@ -911,8 +916,8 @@ async function projectDetailView(id) {
   ];
   fields.forEach(([k, v]) => {
     if (v) info.appendChild(h('div', { class: 'row-between', style: 'margin-top:8px' }, [
-      h('span', { class: 'muted', style: 'font-size:13px' }, k),
-      h('span', { style: 'font-size:13px;max-width:60%;text-align:right' }, String(v))
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, k),
+      h('span', { style: 'font-size:var(--g-fs-md);max-width:60%;text-align:right' }, String(v))
     ]));
   });
   const editBtns = h('div', { class: 'btn-row' }, [
@@ -944,7 +949,7 @@ async function projectDetailView(id) {
     h('button', { class: 'btn sm ghost', onclick: () => projectForm(p) }, '添加/改名')
   ]));
   if (!stages.length) {
-    stageCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置阶段，点「添加/改名」或项目「编辑」添加'));
+    stageCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:8px' }, '未设置阶段，点「添加/改名」或项目「编辑」添加'));
   } else {
     const stageAlertDays = Number(await Meta.get('stageAlertDays', 3)) || 3;
     const td = today();
@@ -971,7 +976,7 @@ async function projectDetailView(id) {
         reviewTxt = dv === 0 ? ' · 按期完成' : (dv > 0 ? ' · 比计划晚 ' + dv + ' 天' : ' · 比计划早 ' + (-dv) + ' 天');
       }
       const nameWrap = h('div', { style: 'flex:1;min-width:0' }, [
-        h('div', { style: 'font-weight:600;font-size:13px' }, [
+        h('div', { style: 'font-weight:600;font-size:var(--g-fs-md)' }, [
           document.createTextNode(s.name || '未命名阶段'),
           warn ? h('span', { class: 'tag ' + warn.cls, style: 'margin-left:6px' }, warn.text) : null
         ]),
@@ -985,7 +990,7 @@ async function projectDetailView(id) {
       const row2 = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap' });
       const mk = (label, key, width) => {
         const wrap = h('div', { style: 'display:flex;gap:3px;align-items:center;flex:1;min-width:0' });
-        wrap.appendChild(h('span', { class: 'muted', style: 'font-size:11px;flex:0 0 auto' }, label));
+        wrap.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-xs);flex:0 0 auto' }, label));
         const inp = h('input', { type: 'date', value: s[key] || '', title: label, style: 'width:' + width + ';min-width:0;flex:1' });
         if (locked) inp.disabled = true;
         inp.addEventListener('change', () => { s[key] = inp.value; Projects.save(p); });
@@ -1019,9 +1024,9 @@ async function projectDetailView(id) {
     const level = ratio >= 1 ? 'over' : (ratio >= (Number(await Meta.get('budgetAlertPct', 80)) || 80) / 100 ? 'near' : '');
     wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px' }, [
       h('div', { class: 'row-between' }, [
-        h('span', { class: 'muted', style: 'font-size:12px' },
+        h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' },
           '成本预算 ' + M(budget) + ' · 已用 ' + M(st.expense) + (ratio >= 1 ? ' · 超支 ' + M(st.expense - budget) : '')),
-        h('span', { style: 'font-size:12px;font-weight:700;color:' + (level === 'over' ? 'var(--danger)' : level === 'near' ? 'var(--accent)' : 'var(--muted)') },
+        h('span', { style: 'font-size:var(--g-fs-sm);font-weight:700;color:' + (level === 'over' ? 'var(--danger)' : level === 'near' ? 'var(--accent)' : 'var(--muted)') },
           pct + '%' + (level === 'over' ? ' ⚠️' : ''))
       ]),
       h('div', { class: 'bar', style: 'margin-top:6px' }, [h('div', { class: 'bar-fill' + (level === 'over' ? ' over' : ''), style: 'width:' + pct + '%' })])
@@ -1042,7 +1047,7 @@ async function projectDetailView(id) {
       locked ? null : h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑')
     ]));
     if (!planItems.length) {
-      planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别。请到「项目编辑」中从统一分类下拉选择添加'));
+      planCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:8px' }, '未设置计划类别。请到「项目编辑」中从统一分类下拉选择添加'));
     } else {
       planItems.forEach((it) => {
         const spent = spentOf(it.id);
@@ -1064,8 +1069,8 @@ async function projectDetailView(id) {
           const del = h('button', { class: 'delete-x', onclick: () => { planItems = planItems.filter((x) => x.id !== it.id); renderPlanCard(); } }, '×');
           top.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, [sel, inp, del]));
         } else {
-          top.appendChild(h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'));
-          top.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + M(plan) + ' · 已用 ' + M(spent) + (over ? ' · 超支 ' + M(spent - plan) : (left >= 0 ? ' · 余 ' + M(left) : ''))));
+          top.appendChild(h('div', { style: 'font-size:var(--g-fs-md);font-weight:600' }, it.cat || '未命名'));
+          top.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '计划 ' + M(plan) + ' · 已用 ' + M(spent) + (over ? ' · 超支 ' + M(spent - plan) : (left >= 0 ? ' · 余 ' + M(left) : ''))));
         }
         row.appendChild(top);
         if (!planEditMode) row.appendChild(h('div', { class: 'bar', style: 'margin-top:5px' }, [ h('div', { class: 'bar-fill' + (over ? ' over' : ''), style: 'width:' + pct + '%' }) ]));
@@ -1088,7 +1093,7 @@ async function projectDetailView(id) {
     h('div', { style: 'font-weight:700' }, '收付款节点'),
     locked ? null : h('button', { class: 'btn sm primary', onclick: () => reminderForm(id) }, '+ 节点')
   ]));
-  if (!rems.length) remCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '暂无节点。添加后会在约定日前自动提醒（可在「设置」开启系统通知）'));
+  if (!rems.length) remCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:8px' }, '暂无节点。添加后会在约定日前自动提醒（可在「设置」开启系统通知）'));
   else rems.forEach((r) => {
     remCard.appendChild(h('div', { class: 'tx' }, [
       h('div', {}, [
@@ -1150,7 +1155,7 @@ async function reconView() {
     h('h2', { class: 'section', style: 'margin:0' }, '往来对账'),
     h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/parties'; } }, '⚙ 往来单位管理')
   ]));
-  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-2px 0 10px' }, '点击往来单位打开对账单：核对收付款明细、上传账单凭证、一键标记对账状态'));
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-2px 0 10px' }, '点击往来单位打开对账单：核对收付款明细、上传账单凭证、一键标记对账状态'));
 
   // 付款状态筛选
   const chips = h('div', { class: 'chips', style: 'margin-bottom:10px' });
@@ -1173,14 +1178,14 @@ function reconCard(p, st, allTxs, allProjects) {
   const card = h('div', { class: 'card party-clickable', onclick: () => partyStatement(p, allTxs, allProjects) });
   card.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'min-width:0' }, [
-      h('div', { style: 'font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, p.name),
+      h('div', { style: 'font-weight:700;font-size:var(--g-fs-base);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, p.name),
       h('div', { class: 'sub', style: 'margin-top:2px' }, partyTypeLabel(p.type) + (p.phone ? ' · ' + p.phone : ''))
     ]),
     h('span', { class: 'tag ' + (status.cls || 'unpaid') }, status.label || '未付')
   ]));
   card.appendChild(h('div', { class: 'row-between', style: 'margin-top:8px' }, [
     h('div', { class: 'sub' }, '往来 ' + st.count + ' 笔 · 应付 ' + M(st.expenseTotal) + ' · 应收 ' + M(st.incomeTotal)),
-    h('span', { class: 'muted', style: 'font-size:13px;flex:0 0 auto' }, '对账单 ›')
+    h('span', { class: 'muted', style: 'font-size:var(--g-fs-md);flex:0 0 auto' }, '对账单 ›')
   ]));
   return card;
 }
@@ -1193,7 +1198,7 @@ async function partiesView() {
     h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/recon'; } }, '‹ 返回对账'),
     h('button', { class: 'btn sm ghost', onclick: () => partyForm() }, '＋ 新建单位')
   ]));
-  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-4px 0 8px' }, '往来单位的编辑与删除在此维护；日常对账请到「对账」tab'));
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-4px 0 8px' }, '往来单位的编辑与删除在此维护；日常对账请到「对账」tab'));
 
   // 内/外部筛选
   const scopeChips = h('div', { class: 'chips', style: 'margin-bottom:10px' });
@@ -1249,7 +1254,7 @@ function partyCard(p, st, allTxs, allProjects) {
 
   const card = h('div', { class: 'card party-clickable', onclick: () => partyForm(p) });
   card.appendChild(h('div', { class: 'row-between' }, [
-    h('div', { style: 'font-weight:700;font-size:15px' }, p.name),
+    h('div', { style: 'font-weight:700;font-size:var(--g-fs-base)' }, p.name),
     h('span', { class: 'tag ' + (status.cls || 'unpaid') }, status.label || '未付')
   ]));
   card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, typeLabel + '（' + scopeLabel + '）' + (p.phone ? ' · ' + p.phone : '')));
@@ -1264,7 +1269,7 @@ function partyCard(p, st, allTxs, allProjects) {
       const line = (d.income > 0 ? '收 ' + M(d.income) : '') + (d.income > 0 && d.expense > 0 ? ' / ' : '') + (d.expense > 0 ? '付 ' + M(d.expense) : '');
       card.appendChild(h('div', { class: 'sub', style: 'margin-top:5px;padding-left:8px;border-left:2px solid var(--line)' }, [
         h('div', { style: 'font-weight:600' }, d.name),
-        h('div', { class: 'muted', style: 'font-size:12px' }, line + (catParts ? '（' + catParts + '）' : ''))
+        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, line + (catParts ? '（' + catParts + '）' : ''))
       ]));
     });
   } else if (st.incomeTotal > 0) {
@@ -1304,18 +1309,18 @@ function partyStatement(p, allTxs, allProjects) {
   ]));
   body.appendChild(h('div', { style: 'display:flex;gap:10px;margin-top:10px' }, [
     h('div', { style: 'flex:1;background:rgba(224,101,79,.10);border-radius:10px;padding:8px;text-align:center' }, [
-      h('div', { class: 'muted', style: 'font-size:12px' }, '应付/已付合计'),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '应付/已付合计'),
       h('div', { class: 'amt expense', style: 'font-size:16px' }, M(pay))
     ]),
     h('div', { style: 'flex:1;background:rgba(76,175,120,.10);border-radius:10px;padding:8px;text-align:center' }, [
-      h('div', { class: 'muted', style: 'font-size:12px' }, '应收/已收合计'),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '应收/已收合计'),
       h('div', { class: 'amt income', style: 'font-size:16px' }, M(rec))
     ])
   ]));
   if (Object.keys(byCat).length) {
     body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '按分类小计'));
     Object.keys(byCat).forEach((c) => {
-      body.appendChild(h('div', { class: 'row-between', style: 'margin-top:4px;font-size:13px' }, [
+      body.appendChild(h('div', { class: 'row-between', style: 'margin-top:4px;font-size:var(--g-fs-md)' }, [
         h('span', { class: 'muted' }, c), h('span', {}, M(byCat[c]))
       ]));
     });
@@ -1324,7 +1329,7 @@ function partyStatement(p, allTxs, allProjects) {
     body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '按项目小计（收为负/付为正）'));
     Object.keys(byProj).forEach((pid) => {
       const v = byProj[pid];
-      body.appendChild(h('div', { class: 'row-between', style: 'margin-top:4px;font-size:13px' }, [
+      body.appendChild(h('div', { class: 'row-between', style: 'margin-top:4px;font-size:var(--g-fs-md)' }, [
         h('span', { class: 'muted', style: 'max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, pname(pid)),
         h('span', {}, (v >= 0 ? '付 ' : '收 ') + M(Math.abs(v)))
       ]));
@@ -1333,11 +1338,11 @@ function partyStatement(p, allTxs, allProjects) {
   // 账单凭证：上传送货单/收据/对账单（图片或 PDF），便于日后核对付款金额
   const bills = p.bills || [];
   body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '账单凭证（' + bills.length + '）'));
-  if (!bills.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '暂无账单。可拍照或上传送货单、收据、对账单（图片/PDF），与流水核对付款金额'));
+  if (!bills.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' }, '暂无账单。可拍照或上传送货单、收据、对账单（图片/PDF），与流水核对付款金额'));
   bills.forEach((b) => {
     body.appendChild(h('div', { class: 'tx' }, [
       h('div', {}, [
-        h('div', { style: 'font-size:13px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, b.name || '未命名账单'),
+        h('div', { style: 'font-size:var(--g-fs-md);max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, b.name || '未命名账单'),
         h('div', { class: 'meta' }, fmtDate(new Date(b.at || Date.now()).toISOString().slice(0, 10)) + ' · ' + Math.max(1, Math.round((Number(b.size) || 0) / 1024)) + 'KB' + (String(b.type || b.name || '').indexOf('pdf') >= 0 ? ' · PDF' : ''))
       ]),
       h('div', { style: 'display:flex;gap:6px;align-items:center' }, [
@@ -1376,11 +1381,11 @@ function partyStatement(p, allTxs, allProjects) {
       h('button', { class: 'btn sm ghost', onclick: () => fileInp.click() }, '📎 选择文件')
     ]));
   } else {
-    body.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' }, '账单已达 9 张上限，请先删除部分再上传'));
+    body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '账单已达 9 张上限，请先删除部分再上传'));
   }
 
   body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '流水明细（' + rel.length + ' 笔）'));
-  if (!rel.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '该单位暂无流水'));
+  if (!rel.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' }, '该单位暂无流水'));
   rel.forEach((t) => {
     const isIn = isIncome(t), isTr = isTransfer(t);
     const title = isTr ? '转账' : (isIn ? (t.subType || '收入') : ((t.category || '') + (t.subCat ? '·' + t.subCat : '')));
@@ -1412,7 +1417,7 @@ async function viewBill(b, reopen) {
   const close = () => { closeModal(); if (reopen) reopen(); };
   const isPdf = String(a.type || b.type || '').indexOf('pdf') >= 0 || /\.pdf$/i.test(b.name || '');
   if (isPdf) {
-    const openLink = h('a', { href: url, target: '_blank', rel: 'noopener', style: 'display:block;margin-top:8px;text-align:center;font-size:13px;color:var(--accent)' }, '在新窗口打开 PDF ▸');
+    const openLink = h('a', { href: url, target: '_blank', rel: 'noopener', style: 'display:block;margin-top:8px;text-align:center;font-size:var(--g-fs-md);color:var(--accent)' }, '在新窗口打开 PDF ▸');
     openModal('账单预览', h('div', {}, [
       h('iframe', { src: url, style: 'width:100%;height:58vh;border:none;border-radius:8px;background:#fff' }),
       openLink
@@ -1517,7 +1522,7 @@ async function statsView() {
       const pct = Math.max(4, Math.round((b.income + b.expense) / maxSum * 100));
       card.appendChild(h('div', Object.assign({ class: 'tr-row' }, drill ? { onclick: drill } : {}), [
         h('div', { style: 'flex:1;min-width:0' }, [
-          h('div', { style: 'font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, b.label),
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, b.label),
           h('div', { class: 'meta' }, b.count + ' 笔 · 占比 ' + Math.round((b.income + b.expense) / maxSum * 100) + '%'),
           h('div', { class: 'bar' }, h('div', { class: 'bar-fill' + (b.income - b.expense < 0 ? ' over' : ''), style: 'width:' + pct + '%' }))
         ]),
@@ -1542,20 +1547,20 @@ async function statsView() {
     uninv.forEach((t) => { uninvSum += Number(t.amount) || 0; });
     const ucard = h('div', { class: 'card' });
     ucard.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:4px' }, [
-      h('span', { class: 'muted', style: 'font-size:13px' }, '合计 ' + uninv.length + ' 笔'),
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '合计 ' + uninv.length + ' 笔'),
       h('span', { class: 'amt expense' }, M(uninvSum))
     ]));
     uninv.slice().sort((a, b) => fmtDate(b.date).localeCompare(fmtDate(a.date))).forEach((t) => {
       ucard.appendChild(h('div', { class: 'tr-row', onclick: () => txForm(null, t.projectId || '', t) }, [
         h('div', { style: 'flex:1;min-width:0' }, [
-          h('div', { style: 'font-weight:600;font-size:14px' }, (t.subType || '收款') + ' · ' + pname(t.projectId)),
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, (t.subType || '收款') + ' · ' + pname(t.projectId)),
           h('div', { class: 'meta' }, fmtDate(t.date) + (t.partyName ? ' · ' + t.partyName : '') + ' · 票:' + (t.invoiceStatus || '未开') + (t.invoiceType ? '/' + t.invoiceType : ''))
         ]),
         h('div', { class: 'tr-r' }, h('div', { class: 'amt income' }, '+' + M(t.amount))),
         h('span', { class: 'chev' }, '✎')
       ]));
     });
-    ucard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' }, '点击一笔可进入编辑，把开票状态改为「已开」'));
+    ucard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '点击一笔可进入编辑，把开票状态改为「已开」'));
     wrap.appendChild(ucard);
   }
 
@@ -1587,23 +1592,33 @@ function monthTrendCard(txs) {
   const card = h('div', { class: 'card' });
   const rowEl = h('div', { class: 'trend-row' });
   months.forEach((m) => {
-    rowEl.appendChild(h('div', { class: 'trend-col' }, [
+    // v1.9.0：点击某月下钻到流水页该月（自定义区间）
+    const col = h('div', {
+      class: 'trend-col', style: 'cursor:pointer', title: '查看 ' + m.key.slice(0, 4) + '年' + m.label + '流水',
+      onclick: () => {
+        state.ledgerRange = 'custom';
+        state.ledgerCustom = { label: m.key.slice(0, 4) + '年' + m.label, from: m.key + '-01', to: m.key + '-31' };
+        state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all'; state.ledgerQ = '';
+        location.hash = '#/ledger/custom';
+      }
+    }, [
       h('div', { class: 'trend-bars', title: '收 ' + M(m.income) + ' / 支 ' + M(m.expense) }, [
         h('div', { class: 'trend-bar in', style: 'height:' + Math.max(3, Math.round(m.income / maxV * 88)) + 'px' }),
         h('div', { class: 'trend-bar out', style: 'height:' + Math.max(3, Math.round(m.expense / maxV * 88)) + 'px' })
       ]),
       h('div', { class: 'trend-l' }, m.label)
-    ]));
+    ]);
+    rowEl.appendChild(col);
   });
   card.appendChild(rowEl);
-  card.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, '▮ 收入　▮ 支出（近6个月）'));
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:8px' }, '▮ 收入　▮ 支出（近6个月，点击月份可看该月流水）'));
   // 环比：本月 vs 上月
   const cur = months[5], prev = months[4];
   const delta = (a, b) => (b > 0 ? Math.round((a - b) / b * 100) : (a > 0 ? 100 : 0));
   const dInc = delta(cur.income, prev.income), dExp = delta(cur.expense, prev.expense), dNet = delta(cur.income - cur.expense, prev.income - prev.expense);
   const fmtD = (v) => (v > 0 ? '↑' : v < 0 ? '↓' : '→') + (v === 0 ? '持平' : Math.abs(v) + '%');
   const colOf = (v) => v > 0 ? 'var(--danger)' : v < 0 ? 'var(--income)' : 'var(--text-dim)';
-  const chipLine = (label, v) => h('span', { class: 'muted', style: 'font-size:12px' }, [
+  const chipLine = (label, v) => h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, [
     label + ' ',
     h('span', { style: 'font-weight:700;color:' + colOf(v) }, fmtD(v))
   ]);
@@ -1725,6 +1740,99 @@ function roundRect(ctx, x, y, w, hh, r) {
 }
 function truncStr(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
+// ---------- 我的（v1.9.0）：核心资产数字 + 资产看板 + 统计概览 + 设置入口聚合 ----------
+// 底部 tab「我的」；「设置」降为二级页（#/settings 全部功能保留），从本页入口进入。
+async function mineView() {
+  setPageTitle('我的');
+  const [txs, accounts, projects] = await Promise.all([Transactions.all(), getAccounts(), Projects.all()]);
+  const wrap = h('div');
+
+  // 账户余额 = 期初 + 收 - 支（转账互抵不改总资产）；t.account 存账户名
+  const bal = {};
+  accounts.forEach((a) => { bal[a.name] = Number(a.opening) || 0; });
+  txs.forEach((t) => {
+    const amt = Number(t.amount) || 0;
+    if (isTransfer(t)) {
+      if (bal[t.fromAccount] != null) bal[t.fromAccount] -= amt;
+      if (bal[t.toAccount] != null) bal[t.toAccount] += amt;
+    } else if (isIncome(t)) { if (bal[t.account] != null) bal[t.account] += amt; }
+    else if (isExpense(t)) { if (bal[t.account] != null) bal[t.account] -= amt; }
+  });
+  let total = 0;
+  accounts.forEach((a) => { total += bal[a.name] || 0; });
+
+  // 本月收支
+  const now = new Date();
+  const ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  let mIn = 0, mOut = 0;
+  txs.forEach((t) => {
+    if ((fmtDate(t.date) || '').slice(0, 7) !== ym) return;
+    const amt = Number(t.amount) || 0;
+    if (isIncome(t)) mIn += amt; else if (isExpense(t)) mOut += amt;
+  });
+
+  // 统计概览数据
+  const ongoing = projects.filter((p) => p.status === 'ongoing').length;
+  const year = String(now.getFullYear());
+  let uninvN = 0, uninvSum = 0;
+  txs.forEach((t) => {
+    if ((fmtDate(t.date) || '').slice(0, 4) !== year) return;
+    if (isIncome(t) && t.invoiceStatus !== '已开') { uninvN++; uninvSum += Number(t.amount) || 0; }
+  });
+
+  // 核心资产数字
+  const asset = h('div', { class: 'card sum-card' });
+  asset.appendChild(h('div', { class: 'sum-label' }, '总资产 · ' + accounts.length + ' 个账户'));
+  asset.appendChild(h('div', { class: 'sum-main' }, [h('span', { class: 'sum-k' }, ''), h('span', { class: 'sum-v' }, M(total))]));
+  asset.appendChild(h('div', { class: 'sum-sub' }, '本月收 ' + M(mIn) + ' ｜ 支 ' + M(mOut)));
+  wrap.appendChild(asset);
+
+  // 资产看板：账户余额
+  wrap.appendChild(h('h2', { class: 'section' }, '账户余额'));
+  if (!accounts.length) {
+    wrap.appendChild(emptyState('还没有账户', '到「系统设置 → 账户管理」添加'));
+  } else {
+    const acard = h('div', { class: 'card', style: 'padding:4px 14px' });
+    accounts.forEach((a, i) => {
+      acard.appendChild(h('div', { class: 'row-between', style: 'padding:10px 0' + (i < accounts.length - 1 ? ';border-bottom:1px solid var(--border)' : '') }, [
+        h('span', { style: 'font-weight:600' }, a.name || '未命名账户'),
+        h('span', { class: 'amt', style: 'font-size:16px' }, M(bal[a.name] || 0))
+      ]));
+    });
+    wrap.appendChild(acard);
+  }
+
+  // 统计概览
+  wrap.appendChild(h('h2', { class: 'section' }, '统计概览'));
+  const ocard = h('div', { class: 'stat-grid' });
+  ocard.appendChild(h('div', { class: 'stat tappable', onclick: () => { location.hash = '#/projects'; } }, [
+    h('div', { class: 'k' }, '进行中项目'),
+    h('div', { class: 'v' }, ongoing + ' 个')
+  ]));
+  ocard.appendChild(h('div', { class: 'stat tappable', onclick: () => { location.hash = '#/stats'; } }, [
+    h('div', { class: 'k' }, '本年未开票收款'),
+    h('div', { class: 'v expense' }, M(uninvSum)),
+    h('div', { class: 'k' }, uninvN + ' 笔 · 点击查看')
+  ]));
+  wrap.appendChild(ocard);
+
+  // 入口（设置降为二级菜单）
+  wrap.appendChild(h('h2', { class: 'section' }, '更多'));
+  [['⚙️ 系统设置', '#/settings', '提醒预警 · 外观主题 · 账户 · 分类 · 模板 · 备份'],
+   ['🤝 往来单位管理', '#/parties', '往来单位增删改维护'],
+   ['📊 统计报表', '#/stats', '多维拆解 · 月度走势 · 导出']
+  ].forEach(([t, hsh, sub]) => {
+    wrap.appendChild(h('div', { class: 'list-item party-clickable', onclick: () => { location.hash = hsh; } }, [
+      h('div', { style: 'min-width:0' }, [
+        h('div', { style: 'font-weight:600' }, t),
+        h('div', { class: 'sub' }, sub)
+      ]),
+      h('span', { class: 'chev' }, '›')
+    ]));
+  });
+  return wrap;
+}
+
 async function settingsView() {
   setPageTitle('设置');
   const remindDays = await Meta.get('remindDays', 3);
@@ -1737,7 +1845,7 @@ async function settingsView() {
 
   // 系统通知权限
   const permRow = h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' });
-  const permInfo = h('span', { class: 'muted', style: 'font-size:13px;flex:1;min-width:0' }, '');
+  const permInfo = h('span', { class: 'muted', style: 'font-size:var(--g-fs-md);flex:1;min-width:0' }, '');
   function renderPerm() {
     if (typeof Notification === 'undefined') { permInfo.textContent = '此环境不支持系统通知（节点提醒仍会在首页列出）'; return; }
     if (Notification.permission === 'granted') permInfo.textContent = '✅ 系统通知已开启';
@@ -1768,17 +1876,17 @@ async function settingsView() {
   rCard.appendChild(swWrap);
 
   // 提前提醒天数
-  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:12px' }, '收付款节点提前提醒天数（到期前 N 天内每次打开 App 都会提醒，每天每节点一次）'));
+  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:12px' }, '收付款节点提前提醒天数（到期前 N 天内每次打开 App 都会提醒，每天每节点一次）'));
   const input = h('input', { type: 'number', min: '0', max: '30', value: String(remindDays) });
   rCard.appendChild(h('div', { class: 'field', style: 'margin:10px 0 0' }, [input]));
 
   // 预算预警阈值
-  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:12px' }, '预算预警阈值：支出达到成本预算的百分之多少时预警（超支 100% 必然预警）'));
+  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:12px' }, '预算预警阈值：支出达到成本预算的百分之多少时预警（超支 100% 必然预警）'));
   const pctInp = h('input', { type: 'number', min: '1', max: '100', value: String(alertPct) });
   rCard.appendChild(h('div', { class: 'field', style: 'margin:10px 0 0' }, [pctInp]));
 
   // 阶段工期预警提前天数
-  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:12px' }, '阶段工期预警提前天数：未完成阶段距预计结束不足 N 天时提醒（逾期必提醒）'));
+  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:12px' }, '阶段工期预警提前天数：未完成阶段距预计结束不足 N 天时提醒（逾期必提醒）'));
   const stageInp = h('input', { type: 'number', min: '0', max: '30', value: String(stageAlertDays) });
   rCard.appendChild(h('div', { class: 'field', style: 'margin:10px 0 0' }, [stageInp]));
 
@@ -1792,36 +1900,36 @@ async function settingsView() {
   } }, '保存'));
   wrap.appendChild(rCard);
 
-  // 外观（v1.8.0）：深色/亮色主题，即点即生效并持久化到 meta.theme
+  // 外观（v1.9.0）：暖纸账本 / 墨绿夜读，即点即生效并持久化到 meta.theme（旧 light 值自动归入暖纸）
   wrap.appendChild(h('h2', { class: 'section' }, '外观'));
-  const themeSaved = await Meta.get('theme', 'dark');
+  const themeSaved = await Meta.get('theme', 'paper');
   const themeCard = h('div', { class: 'card' });
   const themeSeg = h('div', { class: 'seg' });
-  const tDark = h('button', { class: themeSaved !== 'light' ? 'on' : '' }, '🌙 深色');
-  const tLight = h('button', { class: themeSaved === 'light' ? 'on' : '' }, '☀️ 亮色');
+  const tPaper = h('button', { class: themeSaved !== 'dark' ? 'on' : '' }, '📒 暖纸账本');
+  const tDark = h('button', { class: themeSaved === 'dark' ? 'on' : '' }, '🌙 墨绿夜读');
+  tPaper.addEventListener('click', () => {
+    document.documentElement.dataset.theme = 'paper'; Meta.set('theme', 'paper');
+    tPaper.classList.add('on'); tDark.classList.remove('on');
+  });
   tDark.addEventListener('click', () => {
     document.documentElement.dataset.theme = 'dark'; Meta.set('theme', 'dark');
-    tDark.classList.add('on'); tLight.classList.remove('on');
+    tDark.classList.add('on'); tPaper.classList.remove('on');
   });
-  tLight.addEventListener('click', () => {
-    document.documentElement.dataset.theme = 'light'; Meta.set('theme', 'light');
-    tLight.classList.add('on'); tDark.classList.remove('on');
-  });
-  themeSeg.appendChild(tDark); themeSeg.appendChild(tLight);
+  themeSeg.appendChild(tPaper); themeSeg.appendChild(tDark);
   themeCard.appendChild(themeSeg);
-  themeCard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, '亮色主题适合强光环境查看；设置立即生效并自动记忆'));
+  themeCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:8px' }, '暖纸账本：米色纸面质感，支出以朱砂红标注；墨绿夜读适合夜间弱光。设置立即生效并自动记忆'));
   wrap.appendChild(themeCard);
 
   // 施工阶段模板：独立编辑卡已停用（与「进度计划模板→工装」是同一份数据 meta.stageTemplate，统一在工装 tab 维护，避免双入口 confusion）
-  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:2px 2px 0' },
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:2px 2px 0' },
     'ℹ️ 默认施工阶段（新建项目自动带入、工装模板的阶段名）请到下方「进度计划模板」选「工装进度模板」维护。'));
 
   // 进度计划模板（按装修类型：别墅/平层/跃层/工装，源自内置参考表，可改）
   const planTplCard = h('div', { class: 'card' });
-  planTplCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '进度计划模板（按装修类型维护；项目里按开工日期自动排期）'));
+  planTplCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '进度计划模板（按装修类型维护；项目里按开工日期自动排期）'));
   const ptTypeSel = h('select', {}, PLAN_TYPES.map((t) => h('option', { value: t.id }, t.label + '进度模板')));
   planTplCard.appendChild(h('div', { class: 'field', style: 'margin-top:8px' }, [ptTypeSel]));
-  const ptHint = h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' }, '');
+  const ptHint = h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '');
   planTplCard.appendChild(ptHint);
   const ptList = h('div', { style: 'margin-top:8px' });
   planTplCard.appendChild(ptList);
@@ -1874,13 +1982,13 @@ async function settingsView() {
 
   // 账户管理
   const accCard = h('div', { class: 'card' });
-  accCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '账户（记账时选择；转账可在两账户间划转）'));
+  accCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '账户（记账时选择；转账可在两账户间划转）'));
   const accList = h('div', { style: 'margin-top:8px' });
   accCard.appendChild(accList);
   getAccounts().then((accs) => {
     function renderAccs() {
       accList.innerHTML = '';
-      if (!accs.length) accList.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有账户，点下方「+ 添加账户」'));
+      if (!accs.length) accList.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '还没有账户，点下方「+ 添加账户」'));
       accs.forEach((a, i) => {
         const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
         const nm = h('input', { value: a.name || '', placeholder: '账户名称', style: 'flex:1;min-width:0' });
@@ -1903,13 +2011,13 @@ async function settingsView() {
 
   // 分类层级（一级 ＞ 二级）——统一分类：记账分类与预算计划类别共用同一棵树
   const treeCard = h('div', { class: 'card' });
-  treeCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '分类层级（统一分类：记账选「一级 ＞ 二级」，项目预算计划类别也从这里选）'));
+  treeCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '分类层级（统一分类：记账选「一级 ＞ 二级」，项目预算计划类别也从这里选）'));
   const treeList = h('div', { style: 'margin-top:8px' });
   treeCard.appendChild(treeList);
   getCatTree().then((tree) => {
     function renderTree() {
       treeList.innerHTML = '';
-      if (!tree.length) treeList.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有分类，点下方「+ 添加分类」'));
+      if (!tree.length) treeList.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '还没有分类，点下方「+ 添加分类」'));
       tree.forEach((c, i) => {
         const box = h('div', { style: 'margin-top:8px;padding:9px;border:1px solid var(--border);border-radius:10px' });
         const r1 = h('div', { style: 'display:flex;gap:6px;align-items:center' });
@@ -1920,7 +2028,7 @@ async function settingsView() {
         const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { tree.splice(i, 1); renderTree(); } }, '×');
         r1.appendChild(up); r1.appendChild(down); r1.appendChild(nm); r1.appendChild(del);
         box.appendChild(r1);
-        const subsInp = h('input', { value: (c.subs || []).map((s) => s.name).join('，'), placeholder: '二级类别，逗号分隔：辅材，主材，五金', style: 'width:100%;margin-top:6px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:9px 11px;font-size:13px;font-family:inherit' });
+        const subsInp = h('input', { value: (c.subs || []).map((s) => s.name).join('，'), placeholder: '二级类别，逗号分隔：辅材，主材，五金', style: 'width:100%;margin-top:6px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:9px 11px;font-size:var(--g-fs-md);font-family:inherit' });
         subsInp.addEventListener('input', () => {
           c.subs = subsInp.value.split(/[，,]/).map((s) => s.trim()).filter(Boolean).map((s, j) => ({ id: (c.id || 'c') + '-' + j, name: s }));
         });
@@ -1942,13 +2050,13 @@ async function settingsView() {
 
   // 记账模板（完整维度：类型/金额/分类/账户/成员/商家/备注）
   const tplCard2 = h('div', { class: 'card' });
-  tplCard2.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '记账模板（流水页一键套用；可预存类型/金额/分类/账户/成员/商家/备注）'));
+  tplCard2.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '记账模板（流水页一键套用；可预存类型/金额/分类/账户/成员/商家/备注）'));
   const tplList2 = h('div', { style: 'margin-top:8px' });
   tplCard2.appendChild(tplList2);
   getTemplates().then((tpls) => {
     function renderTpls() {
       tplList2.innerHTML = '';
-      if (!tpls.length) tplList2.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有模板，点下方「+ 添加模板」'));
+      if (!tpls.length) tplList2.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '还没有模板，点下方「+ 添加模板」'));
       tpls.forEach((tp, i) => {
         const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
         const label = (tp.type === 'income' ? '收·' : '支·') + (tp.name || '未命名') + (tp.amount ? ' · ' + fmtMoney(tp.amount) : '');
@@ -1971,8 +2079,8 @@ async function settingsView() {
 
   // 备份与恢复（全量 JSON，含照片凭证）
   const bkCard = h('div', { class: 'card' });
-  bkCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '备份与恢复（强烈建议定期备份：数据存在手机浏览器里，清缓存/换手机前务必导出）'));
-  const bkMsg = h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px;color:var(--income)' });
+  bkCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '备份与恢复（强烈建议定期备份：数据存在手机浏览器里，清缓存/换手机前务必导出）'));
+  const bkMsg = h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px;color:var(--income)' });
   bkCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, [
     h('button', { class: 'btn primary', onclick: async () => {
       bkMsg.textContent = '正在打包数据…';
@@ -2015,7 +2123,7 @@ async function settingsView() {
   wrap.appendChild(bkCard);
 
   wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:18px' }, '关于'));
-  wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:13px;line-height:1.7' },
+  wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:var(--g-fs-md);line-height:1.7' },
     '装修记账 · 本地版（PWA）。所有数据仅保存在本机浏览器，不上传任何服务器。可在安卓 Chrome 中“添加到主屏幕”当作 App 使用。当前为 P1：项目管理、记账（含照片/开票/更细维度）、往来单位、首页看板。'));
 
   return wrap;
@@ -2094,7 +2202,7 @@ function projectForm(existing) {
       row.appendChild(cb); row.appendChild(nm); row.appendChild(dt); row.appendChild(del);
       box.appendChild(row);
       const row2 = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap' });
-      row2.appendChild(h('span', { class: 'muted', style: 'font-size:12px;flex:0 0 auto' }, '预计'));
+      row2.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm);flex:0 0 auto' }, '预计'));
       const ps = h('input', { type: 'date', value: s.planStart || '', title: '预计开始时间', style: 'flex:1;min-width:0' });
       const pe = h('input', { type: 'date', value: s.planEnd || '', title: '预计结束时间', style: 'flex:1;min-width:0' });
       const dur = h('input', { type: 'number', min: '0', value: (s.planStart && s.planEnd) ? Math.max(1, daysDiff(s.planEnd, s.planStart) + 1) : '', placeholder: '工期(天)', title: '工期天数：填开始时间+工期，自动推算结束时间', style: 'width:64px;flex:0 0 auto' });
@@ -2126,7 +2234,7 @@ function projectForm(existing) {
   const tplSel = h('select', { title: '载入对应装修类型的进度计划模板', style: 'flex:1;min-width:0;width:auto' },
     [h('option', { value: '' }, '载入进度模板…')].concat(PLAN_TYPES.map((t) => h('option', { value: t.id }, t.label))));
   const tplConfirm = h('div', { style: 'display:none;gap:6px;align-items:center;margin-top:8px;background:rgba(255,206,84,.12);border-radius:10px;padding:8px;flex-wrap:wrap' });
-  const tplMsg = h('span', { style: 'flex:1;min-width:0;font-size:12px' }, '');
+  const tplMsg = h('span', { style: 'flex:1;min-width:0;font-size:var(--g-fs-sm)' }, '');
   const tplYes = h('button', { class: 'btn sm primary' }, '确认替换');
   const tplNo = h('button', { class: 'btn sm ghost' }, '取消');
   tplConfirm.appendChild(tplMsg); tplConfirm.appendChild(tplYes); tplConfirm.appendChild(tplNo);
@@ -2210,7 +2318,7 @@ function projectForm(existing) {
       const addBtn = h('button', { class: 'btn sm primary', onclick: () => { if (sel.value) { planItems.push({ id: uid(), cat: sel.value, amount: 0 }); renderPlan(); } } }, '添加');
       planList.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' }, [sel, addBtn]));
     } else if (!planItems.length) {
-      planList.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '还没有可用分类，请先到「设置 → 分类层级」添加'));
+      planList.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' }, '还没有可用分类，请先到「设置 → 分类层级」添加'));
     }
   }
   renderPlan();
@@ -2447,7 +2555,7 @@ async function txForm(presetType, presetProject, existingTx, preset) {
 
   // 连续记账：保存成功后弹窗不关、清空可继续记，顶部显示本次累计
   let savedCount = 0, savedSum = 0;
-  const savedBadge = h('div', { style: 'display:none;font-size:13px;text-align:center;margin-top:12px;padding:8px 10px;border-radius:10px;background:rgba(76,175,120,.12);color:var(--income)' });
+  const savedBadge = h('div', { style: 'display:none;font-size:var(--g-fs-md);text-align:center;margin-top:12px;padding:8px 10px;border-radius:10px;background:rgba(76,175,120,.12);color:var(--income)' });
   f.appendChild(savedBadge);
   function updateSaved() {
     if (!savedCount) { savedBadge.style.display = 'none'; return; }
@@ -2930,8 +3038,8 @@ function listenNotifyNav() {
 
 // ---------- 初始化 ----------
 function init() {
-  // 主题：启动最先应用（渲染前），避免闪色
-  Meta.get('theme', 'dark').then((t) => { document.documentElement.dataset.theme = (t === 'light') ? 'light' : 'dark'; }).catch(() => {});
+  // 主题：启动最先应用（渲染前），避免闪色。v1.9.0 定调暖纸账本为默认；旧值 light 自动归入暖纸
+  Meta.get('theme', 'paper').then((t) => { document.documentElement.dataset.theme = (t === 'dark') ? 'dark' : 'paper'; }).catch(() => {});
   document.querySelectorAll('.tab').forEach((t) => {
     t.addEventListener('click', () => { location.hash = '#/' + t.dataset.route; });
   });
