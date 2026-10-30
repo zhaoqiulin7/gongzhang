@@ -20,6 +20,19 @@ const DEFAULT_STAGES = [
   { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' }
 ];
 
+// 兼容 v1.0 早期以字符串数组存储的施工阶段模板（['开工',…] → [{id,name}]）：
+// 老数据直接读 t.name 会得到 undefined，导致新建项目阶段名全部空白。读取时统一归一，旧格式顺手回写迁移。
+async function getStageTpl() {
+  const raw = await Meta.get('stageTemplate', DEFAULT_STAGES);
+  const tpl = (Array.isArray(raw) ? raw : DEFAULT_STAGES)
+    .map((t) => (typeof t === 'string' ? { id: uid(), name: t } : { id: (t && t.id) || uid(), name: (t && t.name) || '' }))
+    .filter((t) => t.name);
+  if (Array.isArray(raw) && raw.some((t) => typeof t === 'string')) {
+    Meta.set('stageTemplate', tpl); // 一次性迁移为对象格式（幂等）
+  }
+  return tpl;
+}
+
 // 默认分类树（一级 → 二级），可在「设置」中维护
 const DEFAULT_CAT_TREE = [
   { name: '材料费', subs: ['辅材', '主材', '五金', '水电材料'] },
@@ -1458,7 +1471,7 @@ async function settingsView() {
   function loadPtType(id) {
     ptType = id;
     if (id === 'fitup') {
-      Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
+      getStageTpl().then((tpl) => {
         ptCur = tpl.map((t) => ({ name: t.name || '', days: null }));
         renderPt();
       });
@@ -1639,8 +1652,8 @@ function projectForm(existing) {
     ? p.stages.map((s) => ({ id: s.id || uid(), name: s.name || '', done: !!s.done, date: s.date || '', planStart: s.planStart || '', planEnd: s.planEnd || '' }))
     : [];
   if (!isEdit) {
-    Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
-      tpl.forEach((t) => stages.push({ id: uid(), name: t.name || '', done: false, date: '' }));
+      getStageTpl().then((tpl) => {
+      tpl.forEach((t) => stages.push({ id: uid(), name: t.name || '', done: false, date: '', planStart: '', planEnd: '' }));
       renderStages();
     });
   }
@@ -1651,8 +1664,22 @@ function projectForm(existing) {
   const houseType = field(f, '户型', h('input', { value: p.houseType || '', placeholder: '如：三室两厅' }));
   const buildArea = field(f, '建筑面积（㎡）', h('input', { value: p.buildArea || '', type: 'number', inputmode: 'decimal' }));
   const constructArea = field(f, '施工面积（㎡）', h('input', { value: p.constructArea || '', type: 'number', inputmode: 'decimal' }));
-  const manager = field(f, '施工经理', h('input', { value: p.manager || '' }));
-  const designer = field(f, '设计师', h('input', { value: p.designer || '' }));
+  // 施工经理/设计师：与「往来单位」联动，下拉选择对应类型人员；编辑时旧值不在列表中则保留为额外选项，避免丢数据
+  function personField(labelText, types, current) {
+    const sel = h('select');
+    sel.appendChild(h('option', { value: '' }, '不指定'));
+    Parties.all().then((list) => {
+      list.filter((pt) => types.indexOf(pt.type) >= 0 && (pt.name || '').trim())
+        .forEach((pt) => sel.appendChild(h('option', { value: pt.name }, pt.name)));
+      if (current && !Array.from(sel.options).some((o) => o.value === current)) {
+        sel.appendChild(h('option', { value: current }, current + '（不在往来单位）'));
+      }
+      sel.value = current || '';
+    });
+    return field(f, labelText, sel);
+  }
+  const manager = personField('施工经理（从往来单位选择）', ['manager'], p.manager || '');
+  const designer = personField('设计师（从往来单位选择）', ['designer'], p.designer || '');
   const contract = field(f, '合同金额（元）', h('input', { value: p.contractAmount || '', type: 'number', inputmode: 'decimal' }));
   const budget = field(f, '成本预算（元，留空=按合同额）', h('input', { value: p.costBudget || '', type: 'number', inputmode: 'decimal' }));
   const startD = field(f, '开工日期', h('input', { value: fmtDate(p.startDate) || today(), type: 'date' }));
@@ -1749,7 +1776,7 @@ function projectForm(existing) {
         if (!base) toast('未填开工日期，已只载入阶段名；填好开工日期后重新载入即可自动排期');
       };
       if (id === 'fitup') {
-        Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => build(tpl.map((t) => ({ name: t.name || '', days: 0 }))));
+        getStageTpl().then((tpl) => build(tpl.map((t) => ({ name: t.name || '', days: 0 }))));
       } else {
         getPlanTemplates().then((t) => build(t[id] || []));
       }
