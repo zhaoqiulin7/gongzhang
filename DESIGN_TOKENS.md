@@ -1,4 +1,4 @@
-# 设计 Token 规范（v1.7.0）
+# 设计 Token 规范（v1.8.0）
 
 > 适用范围：装修记账 App 全部样式（`css/styles.css` 及后续拆分的样式文件）。
 > 本规范与代码同步生效：Token 定义在 `styles.css` 顶部 `:root`，规则以本文件为准。
@@ -16,9 +16,9 @@
 | 类别 | 命名 | 示例 |
 |---|---|---|
 | 颜色 | `--g-c-<色相>-<阶>` | `--g-c-green-600`、`--g-c-green-a18`（a=alpha） |
-| 字号 | `--g-fs-<阶梯>` | `--g-fs-xs`(11) `sm`(12) `md`(13) `base`(15) `lg`(17) `xl`(19) `2xl`(22) `3xl`(30) `amount`(34) |
+| 字号 | `--g-fs-<阶梯>` | `--g-fs-xs`(11) `sm`(12) `md`(13) `ctl`(14，控件) `base`(15) `lg`(17) `xl`(19) `2xl`(22) `fab`(26) `3xl`(30) `amount`(34) `4xl`(40) |
 | 间距 | `--g-sp-<n>` | 4pt 阶梯：4/8/12/16/20/24 |
-| 圆角 | `--g-r-<阶梯>` | `sm`(8) `md`(10) `lg`(14) `xl`(18) `pill`(20) |
+| 圆角 | `--g-r-<阶梯>` | `sm`(8) `md`(10) `btn`(12，控件) `lg`(14) `xl`(18) `pill`(20) |
 | 阴影 | `--g-sh-<用途>` | `--g-sh-card`、`--g-sh-fab` |
 | 层级 | `--g-z-<用途>` | `topbar`(20) `fab`(25) `tabbar`(30) `modal`(50) `float`(60) |
 
@@ -28,6 +28,12 @@
 
 沿用 v1.6 现有名（**刻意不改名，存量样式零改动**）：
 `--bg --surface --surface-2 --primary --primary-light --accent --text --text-dim --danger --income --expense --border --radius --shadow`
+
+v1.8.0 新增（主题差异收敛点）：
+`--info`（信息蓝）、`--on-accent`（强调底上的文字色）、`--topbar-bg`/`--sumcard-bg`（主题渐变）、
+`--tag-active-bg --tag-warn-bg --tag-danger-bg --tag-info-bg --tag-ok-bg --row-sel-bg`（标签/选中底色）
+
+**主题机制**：`html[data-theme="light"]` 块只覆盖语义层 + 随主题变化的阴影基础值（`--g-sh-*`）；组件规则零改动即可换主题。新增主题差异一律加语义 Token，禁止在组件规则里写 `html[data-theme=...]` 分支。
 
 规则：
 - 组件/页面样式中的颜色、圆角、阴影 **必须** 引用语义层，禁止直接写 hex/rgba；
@@ -64,9 +70,10 @@ JS/HTML 内联样式中需要取 Token 时，用 `var(--语义名)`（如 `style
 | 批次 | 内容 | 状态 |
 |---|---|---|
 | 1 | 基础层全量定义 + 语义层映射到基础层 + `--tab-h`→`--c-tab-h` + z-index/阴影/正文字号切 Token | ✅ v1.7.0 已完成 |
-| 2 | 组件规则中的字号（11–34px 共 40+ 处）按阶梯收敛替换 | 排期：与 P3 并行，见任务A进度 |
-| 3 | 间距/圆角散值收敛 + 组件层化（modal、tx 行、frow 等） | 排期：v1.8 |
-| 4 | 亮色主题 / 大字号模式（仅切换语义层与基础层变量） | 排期：Token 批次 3 后 |
+| 2 | styles.css 字号全量收敛（含 `ctl/fab/4xl` 补阶）+ 语义色 rgba 换绑语义 Token | ✅ v1.8.0 已完成 |
+| 3 | 圆角全量收敛（含 `btn:12px` 补阶）+ gap 切间距 Token | ✅ v1.8.0 已完成（padding/margin 散值与 JS 内联样式留待批次 5） |
+| 4 | 亮色主题（`html[data-theme="light"]` 仅覆盖语义层 + 设置页「外观」切换，持久化 meta.theme） | ✅ v1.8.0 已完成 |
+| 5 | padding/margin 散值收敛 + app.js 内联样式 Token 化 | 排期：v1.9 |
 
-> 注意：标签页 `.tag.*`、预警色等语义色 rgba 已收编为 `--g-c-*-a18` 类基础 Token；
-> 批次 2/3 迁移属纯等值替换，每批完成后跑多分辨率回归（400/360/890 截图审计）。
+> 批次 2/3 迁移为等值或 ±1px 内收敛，已通过 400/360/890 三视口截图审计；
+> 残留微值：进度条圆角 4/5/6px（视觉微调值，保留）、`.fab` 字号已 Token 化（--g-fs-fab）。

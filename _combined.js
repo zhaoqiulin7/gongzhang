@@ -503,7 +503,8 @@ const state = {
   ledgerRange: 'month', ledgerCat: 'all', ledgerSub: 'all', ledgerAccount: 'all',
   ledgerProject: 'all', ledgerQ: '', ledgerSort: 'date',
   ledgerBatch: false, ledgerSel: {},
-  statsRange: 'year', statsDim: 'project'
+  statsRange: 'year', statsDim: 'project',
+  reconStatus: 'all'
 };
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
@@ -746,6 +747,7 @@ async function render() {
 
   let node;
   if (route === 'projects') node = await projectsView();
+  else if (route === 'recon') node = await reconView();
   else if (route === 'parties') node = await partiesView();
   else if (route === 'settings') node = await settingsView();
   else if (route === 'stats') node = await statsView();
@@ -770,6 +772,8 @@ function setupFab(route, pid) {
   let fab = null;
   if (route === 'home' || route === 'projects') {
     fab = h('button', { class: 'fab', title: '新建项目', onclick: () => projectForm() }, '+');
+  } else if (route === 'recon') {
+    fab = h('button', { class: 'fab', title: '新建往来单位', onclick: () => partyForm() }, '+');
   } else if (route === 'parties') {
     fab = h('button', { class: 'fab', title: '新建往来单位', onclick: () => partyForm() }, '+');
   } else if (route === 'ledger') {
@@ -1626,12 +1630,61 @@ async function projectDetailView(id) {
 }
 
 // ---------- 往来单位 ----------
-async function partiesView() {
-  setPageTitle('往来单位');
+// ---------- 对账页（v1.8.0）----------
+// 底部 tab「对账」：以对账为主体的往来视图（付款状态筛选 + 点击直接开对账单）；
+// 往来单位的增删改管理移至「往来单位管理」二级页 #/parties，从本页右上入口进入。
+async function reconView() {
+  setPageTitle('对账');
   const [parties, txs, projects] = await Promise.all([Parties.all(), Transactions.all(), Projects.all()]);
   const wrap = h('div');
-  wrap.appendChild(h('h2', { class: 'section' }, '客户（外部）/ 供应商·工人·施工经理·设计师（内部）'));
-  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-4px 0 8px' }, '点击任一往来单位可直接编辑；下方按对应项目列出收/付款明细'));
+  wrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
+    h('h2', { class: 'section', style: 'margin:0' }, '往来对账'),
+    h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/parties'; } }, '⚙ 往来单位管理')
+  ]));
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-2px 0 10px' }, '点击往来单位打开对账单：核对收付款明细、上传账单凭证、一键标记对账状态'));
+
+  // 付款状态筛选
+  const chips = h('div', { class: 'chips', style: 'margin-bottom:10px' });
+  [['all', '全部'], ['unpaid', '未付'], ['paid', '已付'], ['reconciled', '已对账']].forEach(([v, label]) => {
+    chips.appendChild(h('button', { class: 'chip' + ((state.reconStatus || 'all') === v ? ' on' : ''), onclick: () => { state.reconStatus = v; render(); } }, label));
+  });
+  wrap.appendChild(chips);
+
+  let rows = parties.map((p) => ({ p, st: partyStatsSync(txs, p.id) }));
+  if (state.reconStatus && state.reconStatus !== 'all') rows = rows.filter(({ p }) => (p.payStatus || 'unpaid') === state.reconStatus);
+  rows.sort((a, b) => b.st.total - a.st.total);
+
+  if (!rows.length) wrap.appendChild(emptyState('没有符合条件的往来单位', '切换筛选，或在「往来单位管理」中添加'));
+  else rows.forEach(({ p, st }) => wrap.appendChild(reconCard(p, st, txs, projects)));
+  return wrap;
+}
+
+function reconCard(p, st, allTxs, allProjects) {
+  const status = PAY_STATUS[p.payStatus] || PAY_STATUS.unpaid;
+  const card = h('div', { class: 'card party-clickable', onclick: () => partyStatement(p, allTxs, allProjects) });
+  card.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'min-width:0' }, [
+      h('div', { style: 'font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, p.name),
+      h('div', { class: 'sub', style: 'margin-top:2px' }, partyTypeLabel(p.type) + (p.phone ? ' · ' + p.phone : ''))
+    ]),
+    h('span', { class: 'tag ' + (status.cls || 'unpaid') }, status.label || '未付')
+  ]));
+  card.appendChild(h('div', { class: 'row-between', style: 'margin-top:8px' }, [
+    h('div', { class: 'sub' }, '往来 ' + st.count + ' 笔 · 应付 ' + M(st.expenseTotal) + ' · 应收 ' + M(st.incomeTotal)),
+    h('span', { class: 'muted', style: 'font-size:13px;flex:0 0 auto' }, '对账单 ›')
+  ]));
+  return card;
+}
+
+async function partiesView() {
+  setPageTitle('往来单位管理');
+  const [parties, txs, projects] = await Promise.all([Parties.all(), Transactions.all(), Projects.all()]);
+  const wrap = h('div');
+  wrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
+    h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/recon'; } }, '‹ 返回对账'),
+    h('button', { class: 'btn sm ghost', onclick: () => partyForm() }, '＋ 新建单位')
+  ]));
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-4px 0 8px' }, '往来单位的编辑与删除在此维护；日常对账请到「对账」tab'));
 
   // 内/外部筛选
   const scopeChips = h('div', { class: 'chips', style: 'margin-bottom:10px' });
@@ -1887,6 +1940,10 @@ async function statsView() {
   sumCard.appendChild(h('div', { class: 'sum-sub' }, '收入 ' + M(inc) + ' ｜ 支出 ' + M(exp)));
   wrap.appendChild(sumCard);
 
+  // 月度走势（近6个月收支柱状 + 本月环比，红涨绿跌）
+  wrap.appendChild(h('h2', { class: 'section' }, '月度走势'));
+  wrap.appendChild(monthTrendCard(txs));
+
   // 维度拆解：按项目 / 支出分类 / 收入类型 / 按往来 / 按账户
   wrap.appendChild(h('h2', { class: 'section' }, '维度拆解'));
   const DIMS = [
@@ -1993,8 +2050,171 @@ async function statsView() {
     wrap.appendChild(ucard);
   }
 
+  // 导出：CSV 明细 / 长图分享
+  const expRow = h('div', { style: 'display:flex;gap:8px;margin:2px 0 8px' }, [
+    h('button', { class: 'btn sm ghost', style: 'flex:1', onclick: () => exportStatsCsv(inRange, rg, pname) }, '⬇ 导出CSV'),
+    h('button', { class: 'btn sm ghost', style: 'flex:1', onclick: () => shareStatsImage({ rg: rg, inc: inc, exp: exp, dimLabel: (DIMS.find((d) => d.key === dim) || {}).label || '', rows: rows, uninv: uninv }) }, '🖼 长图分享')
+  ]);
+  wrap.appendChild(expRow);
+
   return wrap;
 }
+
+// 近6个月收支柱状 + 本月环比（红涨绿跌：涨红、跌绿）
+function monthTrendCard(txs) {
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'), label: (d.getMonth() + 1) + '月', income: 0, expense: 0 });
+  }
+  txs.forEach((t) => {
+    const d = fmtDate(t.date); if (!d) return;
+    const m = months.find((x) => d.slice(0, 7) === x.key); if (!m) return;
+    const amt = Number(t.amount) || 0;
+    if (isIncome(t)) m.income += amt; else if (isExpense(t)) m.expense += amt;
+  });
+  const maxV = Math.max.apply(null, [1].concat(months.map((m) => Math.max(m.income, m.expense))));
+  const card = h('div', { class: 'card' });
+  const rowEl = h('div', { class: 'trend-row' });
+  months.forEach((m) => {
+    rowEl.appendChild(h('div', { class: 'trend-col' }, [
+      h('div', { class: 'trend-bars', title: '收 ' + M(m.income) + ' / 支 ' + M(m.expense) }, [
+        h('div', { class: 'trend-bar in', style: 'height:' + Math.max(3, Math.round(m.income / maxV * 88)) + 'px' }),
+        h('div', { class: 'trend-bar out', style: 'height:' + Math.max(3, Math.round(m.expense / maxV * 88)) + 'px' })
+      ]),
+      h('div', { class: 'trend-l' }, m.label)
+    ]));
+  });
+  card.appendChild(rowEl);
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, '▮ 收入　▮ 支出（近6个月）'));
+  // 环比：本月 vs 上月
+  const cur = months[5], prev = months[4];
+  const delta = (a, b) => (b > 0 ? Math.round((a - b) / b * 100) : (a > 0 ? 100 : 0));
+  const dInc = delta(cur.income, prev.income), dExp = delta(cur.expense, prev.expense), dNet = delta(cur.income - cur.expense, prev.income - prev.expense);
+  const fmtD = (v) => (v > 0 ? '↑' : v < 0 ? '↓' : '→') + (v === 0 ? '持平' : Math.abs(v) + '%');
+  const colOf = (v) => v > 0 ? 'var(--danger)' : v < 0 ? 'var(--income)' : 'var(--text-dim)';
+  const chipLine = (label, v) => h('span', { class: 'muted', style: 'font-size:12px' }, [
+    label + ' ',
+    h('span', { style: 'font-weight:700;color:' + colOf(v) }, fmtD(v))
+  ]);
+  card.appendChild(h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;border-top:1px solid var(--border);padding-top:8px' }, [
+    chipLine('收入环比', dInc), chipLine('支出环比', dExp), chipLine('结余环比', dNet)
+  ]));
+  return card;
+}
+
+// 统计明细导出 CSV（带 BOM，Excel 打开中文不乱码）
+function exportStatsCsv(rows, rg, pname) {
+  if (!rows.length) { toast('该时间范围没有可导出的记录'); return; }
+  const esc = (v) => { v = v == null ? '' : String(v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const typeOf = (t) => isTransfer(t) ? '转账' : (isIncome(t) ? '收入' : '支出');
+  const lines = [['日期', '类型', '项目', '分类/收入类型', '子类', '往来单位', '账户', '金额', '开票状态', '备注'].join(',')];
+  rows.forEach((t) => {
+    lines.push([
+      fmtDate(t.date), typeOf(t), pname(t.projectId),
+      isIncome(t) ? (t.subType || '') : (t.category || ''),
+      isIncome(t) ? '' : (t.subCat || ''),
+      t.partyName || '', t.account || '',
+      Number(t.amount) || 0,
+      isIncome(t) ? (t.invoiceStatus || '未开') : '',
+      t.note || ''
+    ].map(esc).join(','));
+  });
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '统计_' + rg.label + '_' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('已导出 ' + rows.length + ' 笔 CSV');
+}
+
+// 统计长图：canvas 绘制汇总 + 维度拆解 + 未开票合计，支持系统分享则分享，否则下载 PNG
+function shareStatsImage(d) {
+  try {
+    const W = 750, PAD = 44, rowH = 96;
+    const rows = d.rows.slice(0, 8);
+    let H = PAD + 122 + 186 + 34 + rows.length * rowH + 110 + (d.uninv.length ? 100 : 0);
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    const dark = document.documentElement.dataset.theme !== 'light';
+    const C = dark
+      ? { bg: '#0f1411', card: '#18211c', text: '#e8efe9', dim: '#9bb0a4', inc: '#4caf78', exp: '#e0835a', accent: '#ffce54', border: '#2a372f', danger: '#e0654f' }
+      : { bg: '#f3f6f3', card: '#ffffff', text: '#1d2420', dim: '#66756b', inc: '#1a8f4e', exp: '#b85c2e', accent: '#a9700e', border: '#d9e0da', danger: '#cc4b37' };
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    let y = PAD;
+    ctx.fillStyle = C.text; ctx.font = '700 40px sans-serif';
+    ctx.fillText('装修记账 · 统计报表', PAD, y + 40); y += 66;
+    ctx.fillStyle = C.dim; ctx.font = '26px sans-serif';
+    ctx.fillText((d.rg.label || '') + ' · ' + (d.rg.sub || ''), PAD, y); y += 56;
+    // 汇总卡
+    ctx.fillStyle = C.card;
+    roundRect(ctx, PAD, y, W - PAD * 2, 150, 20); ctx.fill();
+    ctx.fillStyle = C.dim; ctx.font = '26px sans-serif';
+    ctx.fillText('结余', PAD + 28, y + 44);
+    ctx.fillStyle = C.accent; ctx.font = '800 54px sans-serif';
+    ctx.fillText(fmtMoney(d.inc - d.exp), PAD + 120, y + 50);
+    ctx.fillStyle = C.inc; ctx.font = '600 28px sans-serif';
+    ctx.fillText('收 ' + fmtMoney(d.inc), PAD + 28, y + 106);
+    ctx.fillStyle = C.exp;
+    ctx.fillText('支 ' + fmtMoney(d.exp), PAD + 300, y + 106);
+    y += 186;
+    // 维度拆解
+    ctx.fillStyle = C.text; ctx.font = '700 30px sans-serif';
+    ctx.fillText('维度拆解 · ' + (d.dimLabel || ''), PAD, y); y += 34;
+    const maxSum = Math.max.apply(null, [1].concat(d.rows.map((r) => r.income + r.expense)));
+    if (!rows.length) { ctx.fillStyle = C.dim; ctx.font = '26px sans-serif'; ctx.fillText('暂无数据', PAD, y + 30); y += 60; }
+    rows.forEach((r) => {
+      const bw = W - PAD * 2, pct = Math.max(0.04, (r.income + r.expense) / maxSum);
+      ctx.fillStyle = C.text; ctx.font = '600 28px sans-serif';
+      ctx.fillText(truncStr(r.label, 16), PAD, y + 30);
+      ctx.fillStyle = C.dim; ctx.font = '24px sans-serif';
+      const info = r.count + '笔 · ' + Math.round(pct * 100) + '%';
+      ctx.fillText(info, W - PAD - ctx.measureText(info).width, y + 30);
+      ctx.fillStyle = C.border; roundRect(ctx, PAD, y + 44, bw, 16, 8); ctx.fill();
+      ctx.fillStyle = (r.income - r.expense < 0) ? C.exp : C.inc;
+      roundRect(ctx, PAD, y + 44, Math.max(20, bw * pct), 16, 8); ctx.fill();
+      ctx.font = '600 26px sans-serif';
+      let x = W - PAD;
+      if (r.expense) { const s = '-' + fmtMoney(r.expense); ctx.fillStyle = C.exp; x -= ctx.measureText(s).width; ctx.fillText(s, x, y + 88); x -= 24; }
+      if (r.income) { const s = '+' + fmtMoney(r.income); ctx.fillStyle = C.inc; x -= ctx.measureText(s).width; ctx.fillText(s, x, y + 88); }
+      y += rowH;
+    });
+    if (d.uninv.length) {
+      let us = 0; d.uninv.forEach((t) => { us += Number(t.amount) || 0; });
+      y += 20;
+      ctx.fillStyle = C.danger; ctx.font = '600 28px sans-serif';
+      ctx.fillText('未开票收款 ' + d.uninv.length + ' 笔 · 合计 ' + fmtMoney(us), PAD, y + 30);
+    }
+    ctx.fillStyle = C.dim; ctx.font = '24px sans-serif';
+    ctx.fillText('生成于 ' + new Date().toLocaleString('zh-CN', { hour12: false }), PAD, H - 30);
+    cv.toBlob((b) => {
+      if (!b) { toast('长图生成失败'); return; }
+      const file = new File([b], '统计报表.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+        navigator.share({ files: [file], title: '统计报表' }).catch(() => {});
+      } else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(b); a.download = '统计报表_' + new Date().toISOString().slice(0, 10) + '.png';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        toast('已生成统计长图');
+      }
+    }, 'image/png');
+  } catch (e) { toast('长图生成失败：' + e.message); }
+}
+
+function roundRect(ctx, x, y, w, hh, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + hh, r);
+  ctx.arcTo(x + w, y + hh, x, y + hh, r);
+  ctx.arcTo(x, y + hh, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function truncStr(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
 async function settingsView() {
   setPageTitle('设置');
@@ -2062,6 +2282,26 @@ async function settingsView() {
     ]).then(() => toast('已保存提醒与预警设置'));
   } }, '保存'));
   wrap.appendChild(rCard);
+
+  // 外观（v1.8.0）：深色/亮色主题，即点即生效并持久化到 meta.theme
+  wrap.appendChild(h('h2', { class: 'section' }, '外观'));
+  const themeSaved = await Meta.get('theme', 'dark');
+  const themeCard = h('div', { class: 'card' });
+  const themeSeg = h('div', { class: 'seg' });
+  const tDark = h('button', { class: themeSaved !== 'light' ? 'on' : '' }, '🌙 深色');
+  const tLight = h('button', { class: themeSaved === 'light' ? 'on' : '' }, '☀️ 亮色');
+  tDark.addEventListener('click', () => {
+    document.documentElement.dataset.theme = 'dark'; Meta.set('theme', 'dark');
+    tDark.classList.add('on'); tLight.classList.remove('on');
+  });
+  tLight.addEventListener('click', () => {
+    document.documentElement.dataset.theme = 'light'; Meta.set('theme', 'light');
+    tLight.classList.add('on'); tDark.classList.remove('on');
+  });
+  themeSeg.appendChild(tDark); themeSeg.appendChild(tLight);
+  themeCard.appendChild(themeSeg);
+  themeCard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, '亮色主题适合强光环境查看；设置立即生效并自动记忆'));
+  wrap.appendChild(themeCard);
 
   // 施工阶段模板：独立编辑卡已停用（与「进度计划模板→工装」是同一份数据 meta.stageTemplate，统一在工装 tab 维护，避免双入口 confusion）
   wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:2px 2px 0' },
@@ -3181,6 +3421,8 @@ function listenNotifyNav() {
 
 // ---------- 初始化 ----------
 function init() {
+  // 主题：启动最先应用（渲染前），避免闪色
+  Meta.get('theme', 'dark').then((t) => { document.documentElement.dataset.theme = (t === 'light') ? 'light' : 'dark'; }).catch(() => {});
   document.querySelectorAll('.tab').forEach((t) => {
     t.addEventListener('click', () => { location.hash = '#/' + t.dataset.route; });
   });
