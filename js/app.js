@@ -1,4 +1,4 @@
-import { Projects, Transactions, Parties, Attachments, Reminders, Meta, uid } from './db.js';
+import { Projects, Transactions, Parties, Attachments, Reminders, Meta, uid, exportAll, importAll } from './db.js';
 import {
   INCOME_TYPES, EXPENSE_CATS, PAY_METHODS, REGIONS, TRADES, PARTY_TYPES, STATUS_MAP,
   fmtMoney, fmtDate, fmtDateTime, fmtMD, weekdayCN, pad2, ymd, nowHm, timeRanges, rangeOf,
@@ -10,7 +10,8 @@ const state = {
   projectId: null, homeSort: 'start', homeStage: 'all', partiesSort: 'type', partyScope: 'all',
   hideMoney: false,
   ledgerRange: 'month', ledgerCat: 'all', ledgerSub: 'all', ledgerAccount: 'all',
-  ledgerProject: 'all', ledgerQ: '', ledgerSort: 'date'
+  ledgerProject: 'all', ledgerQ: '', ledgerSort: 'date',
+  ledgerBatch: false, ledgerSel: {}
 };
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
@@ -124,13 +125,14 @@ async function attURL(id) {
 }
 
 // ---------- 渲染骨架 ----------
+// 并发渲染保护：每次 render 递增代序号，慢的旧渲染在落盘前发现已被替代则丢弃，
+// 避免连续保存/快速切换时新旧渲染交错导致视图内容混搭。
+let _renderSeq = 0;
 async function render() {
+  const seq = ++_renderSeq;
   const hash = location.hash.replace(/^#\/?/, '');
   const parts = hash.split('/');
   const route = parts[0] || 'home';
-  const view = document.getElementById('view');
-  view.innerHTML = '';
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.route === route));
 
   let node;
   if (route === 'projects') node = await projectsView();
@@ -143,7 +145,11 @@ async function render() {
   else if (route === 'project' && parts[1]) node = await projectDetailView(parts[1]);
   else node = await homeView();
 
+  if (seq !== _renderSeq) return; // 已有更新的渲染，丢弃本次结果
+  const view = document.getElementById('view');
+  view.innerHTML = '';
   view.appendChild(node);
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.route === route));
   setupFab(route, parts[1]);
 }
 
@@ -159,6 +165,10 @@ function setupFab(route, pid) {
     fab = h('button', { class: 'fab', title: '记一笔', onclick: () => txForm('expense', '') }, '+');
   } else if (route === 'project' && pid) {
     fab = h('button', { class: 'fab', title: '记一笔', onclick: () => txForm(null, pid) }, '+');
+    // 已结算归档的项目：隐藏记一笔入口（内容锁定）
+    Projects.get(pid).then((p) => {
+      if (p && p.status === 'settled') { const f = document.getElementById('fab'); if (f) f.remove(); }
+    });
   }
   if (fab) fab.id = 'fab', document.getElementById('app').appendChild(fab);
 }
@@ -208,6 +218,36 @@ async function homeView() {
     ]));
   });
   wrap.appendChild(timeCard);
+
+  // 7 天内到期节点（含逾期），点击进入对应项目
+  const lim = new Date();
+  lim.setDate(lim.getDate() + 7);
+  const limStr = lim.getFullYear() + '-' + pad2(lim.getMonth() + 1) + '-' + pad2(lim.getDate());
+  const td = today();
+  const dueSoon = rems.filter((r) => !r.done && r.dueDate && r.dueDate <= limStr)
+    .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+  if (dueSoon.length) {
+    wrap.appendChild(h('h2', { class: 'section' }, '7 天内到期（' + dueSoon.length + '）'));
+    const dueCard = h('div', { class: 'card' });
+    dueSoon.forEach((r) => {
+      const overdue = r.dueDate < td;
+      const pd = projects.find((x) => x.id === r.projectId);
+      dueCard.appendChild(h('div', { class: 'tr-row', onclick: () => { if (pd) location.hash = '#/project/' + pd.id; else toast('该节点所属项目已删除'); } }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:14px' }, [
+            h('span', { class: 'tag ' + (r.kind === 'receive' ? 'paid' : 'unpaid'), style: 'margin-right:6px' }, r.kind === 'receive' ? '收' : '付'),
+            document.createTextNode(r.title || '未命名节点')
+          ]),
+          h('div', { class: 'meta' }, (pd ? pd.name : '未关联项目') + ' · 约定 ' + fmtDate(r.dueDate) + (overdue ? ' · 已逾期' + Math.round((new Date(td) - new Date(r.dueDate)) / 864e5) + '天' : ''))
+        ]),
+        h('div', { class: 'tr-r' }, [
+          h('div', { class: 'amt ' + (r.kind === 'receive' ? 'income' : 'expense'), style: r.amount ? '' : 'font-size:13px;color:var(--muted)' }, r.amount ? M(r.amount) : (overdue ? '⚠️ 逾期' : '待办'))
+        ]),
+        h('span', { class: 'chev' }, '›')
+      ]));
+    });
+    wrap.appendChild(dueCard);
+  }
 
   // 项目进度看板：排序 + 按施工阶段筛选
   wrap.appendChild(h('h2', { class: 'section' }, '项目进度看板'));
@@ -320,7 +360,10 @@ function projectCard(p, stats) {
     h('div', { style: 'font-weight:700;color:var(--accent)' }, '结余 ' + M(st.profit))
   ]));
 
-  card.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:12px' }, [
+  const settled = p.status === 'settled';
+  card.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:12px' }, settled ? [
+    h('button', { class: 'btn sm ghost', onclick: (e) => { e.stopPropagation(); location.hash = '#/project/' + p.id; } }, '🔒 已结算归档·查看详情')
+  ] : [
     h('button', { class: 'btn sm primary', onclick: (e) => { e.stopPropagation(); txForm('income', p.id); } }, '记收款'),
     h('button', { class: 'btn sm', style: 'background:var(--expense);color:#fff', onclick: (e) => { e.stopPropagation(); txForm('expense', p.id); } }, '记支出'),
     h('button', { class: 'btn sm ghost', onclick: (e) => { e.stopPropagation(); location.hash = '#/project/' + p.id; } }, '详情')
@@ -376,7 +419,11 @@ async function ledgerView() {
     const tplRow = h('div', { class: 'chips', style: 'margin-bottom:14px' });
     tpls.forEach((tp) => {
       tplRow.appendChild(h('button', { class: 'chip', title: '套用模板记账', onclick: () => {
-        txForm(tp.type || 'expense', '', null, { type: tp.type || 'expense', amount: tp.amount, category: tp.category, note: tp.note });
+        txForm(tp.type || 'expense', '', null, {
+          type: tp.type || 'expense', amount: tp.amount, category: tp.category,
+          account: tp.account || '', memberId: tp.memberId || '', merchantId: tp.merchantId || '',
+          subType: (tp.type === 'income' ? (tp.category || '') : ''), note: tp.note || ''
+        });
       } }, tp.name + (tp.amount ? ' · ' + M(tp.amount) : '')));
     });
     wrap.appendChild(tplRow);
@@ -399,6 +446,9 @@ async function ledgerView() {
     transfer ? h('span', { style: 'margin-left:8px' }, '转账 ' + M(transfer)) : null
   ]));
   wrap.appendChild(sumCard);
+
+  // 近 6 个月收支趋势
+  wrap.appendChild(trendCard(txs));
 
   // 时间粒度
   const pills = h('div', { class: 'pill-tabs' });
@@ -468,6 +518,13 @@ async function ledgerView() {
     sortSeg.appendChild(h('button', { class: state.ledgerSort === v ? 'on' : '', onclick: () => { state.ledgerSort = v; render(); } }, label));
   });
   dimCard.appendChild(h('div', { class: 'dim-row' }, [h('span', { class: 'dim-k' }, '排序'), sortSeg]));
+  // 批量管理开关
+  dimCard.appendChild(h('div', { class: 'dim-row' }, [
+    h('span', { class: 'dim-k' }, '批量'),
+    h('button', { class: 'btn sm ' + (state.ledgerBatch ? 'primary' : 'ghost'), style: 'flex:1', onclick: () => {
+      state.ledgerBatch = !state.ledgerBatch; state.ledgerSel = {}; render();
+    } }, state.ledgerBatch ? '✓ 批量管理中（点此退出）' : '进入批量管理（多选删除/改项目）')
+  ]));
   wrap.appendChild(dimCard);
 
   // ---- 年 → 月 分组列表 ----
@@ -510,11 +567,14 @@ async function ledgerView() {
       });
     });
   }
+  if (state.ledgerBatch) wrap.appendChild(batchBar(projects));
   return wrap;
 }
 
 function ledgerRow(t, pname) {
   const isIn = isIncome(t), isOut = isExpense(t);
+  const batch = state.ledgerBatch;
+  const isSel = !!state.ledgerSel[t.id];
   const title = isTransfer(t)
     ? '转账 ' + (t.fromAccount || '?') + ' → ' + (t.toAccount || '?')
     : (isIn ? (t.subType || '收入') : ((t.category || '支出') + (t.subCat ? ' · ' + t.subCat : '')));
@@ -526,21 +586,100 @@ function ledgerRow(t, pname) {
   ].filter(Boolean).join(' · ');
   const sign = isIn ? '+' : (isOut ? '-' : '↔');
   const cls = isIn ? 'income' : (isOut ? 'expense' : 'transfer');
-  return h('div', { class: 'tx' }, [
-    h('div', { style: 'display:flex;gap:10px;align-items:center;min-width:0;flex:1' }, [
-      h('div', { class: 'tx-date' }, [
-        h('div', { class: 'tx-d' }, String(fmtDate(t.date)).slice(8, 10) + '日'),
-        h('div', { class: 'tx-w' }, weekdayCN(t.date))
+  const dateCol = h('div', { class: 'tx-date' }, [
+    h('div', { class: 'tx-d' }, String(fmtDate(t.date)).slice(8, 10) + '日'),
+    h('div', { class: 'tx-w' }, weekdayCN(t.date))
+  ]);
+  const textCol = h('div', { style: 'min-width:0;flex:1' }, [
+    h('div', { style: 'font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, title),
+    h('div', { class: 'meta', style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, sub + (t.time ? ' ' + t.time : ''))
+  ]);
+  const left = h('div', { style: 'display:flex;gap:10px;align-items:center;min-width:0;flex:1' }, batch
+    ? (() => {
+        const cb = h('input', { type: 'checkbox', style: 'width:18px;height:18px;flex:0 0 auto' });
+        cb.checked = isSel;
+        cb.addEventListener('click', (e) => e.stopPropagation());
+        cb.addEventListener('change', () => { state.ledgerSel[t.id] = cb.checked; render(); });
+        return [cb, dateCol, textCol];
+      })()
+    : [dateCol, textCol]);
+  const right = h('div', { style: 'display:flex;align-items:center;gap:6px;flex:0 0 auto' }, [
+    h('div', { class: 'amt ' + cls }, sign + M(t.amount).replace('¥', '¥')),
+    batch ? null : h('button', { class: 'edit-x', title: '复制此笔为新记录', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, Object.assign({}, t, { __copy: true, date: today(), time: nowHm() })); } }, '⧉'),
+    batch ? null : h('button', { class: 'edit-x', title: '编辑', onclick: () => txForm(null, t.projectId, t) }, '✎')
+  ].filter(Boolean));
+  const rowNode = h('div', { class: 'tx' + (isSel ? ' sel' : '') + (batch ? ' batch' : '') }, [left, right]);
+  if (batch) rowNode.addEventListener('click', () => { state.ledgerSel[t.id] = !state.ledgerSel[t.id]; render(); });
+  return rowNode;
+}
+
+// 近 6 个月收支趋势（纯 CSS 柱状，点击下方说明无操作）
+function trendCard(txs) {
+  const nowD = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(nowD.getFullYear(), nowD.getMonth() - i, 1);
+    months.push({ y: d.getFullYear(), m: d.getMonth() + 1 });
+  }
+  const data = months.map(({ y, m }) => {
+    let inc = 0, exp = 0;
+    const pre = y + '-' + pad2(m);
+    txs.forEach((t) => {
+      const d = fmtDate(t.date);
+      if (d.indexOf(pre) === 0) {
+        if (isIncome(t)) inc += Number(t.amount) || 0;
+        else if (isExpense(t)) exp += Number(t.amount) || 0;
+      }
+    });
+    return { label: m + '月', inc, exp };
+  });
+  const max = Math.max(1, ...data.map((d) => Math.max(d.inc, d.exp)));
+  const card = h('div', { class: 'card' });
+  card.appendChild(h('div', { style: 'font-weight:700;margin-bottom:10px' }, '近 6 个月收支趋势'));
+  const row = h('div', { class: 'trend-row' });
+  data.forEach((d) => {
+    row.appendChild(h('div', { class: 'trend-col' }, [
+      h('div', { class: 'trend-bars' }, [
+        h('div', { class: 'trend-bar in', style: 'height:' + Math.max(2, Math.round((d.inc / max) * 84)) + 'px', title: '收入 ' + fmtMoney(d.inc) }),
+        h('div', { class: 'trend-bar out', style: 'height:' + Math.max(2, Math.round((d.exp / max) * 84)) + 'px', title: '支出 ' + fmtMoney(d.exp) })
       ]),
-      h('div', { style: 'min-width:0;flex:1' }, [
-        h('div', { style: 'font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, title),
-        h('div', { class: 'meta', style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, sub + (t.time ? ' ' + t.time : ''))
-      ])
-    ]),
-    h('div', { style: 'display:flex;align-items:center;gap:6px;flex:0 0 auto' }, [
-      h('div', { class: 'amt ' + cls }, sign + M(t.amount).replace('¥', '¥')),
-      h('button', { class: 'edit-x', title: '编辑', onclick: () => txForm(null, t.projectId, t) }, '✎')
-    ])
+      h('div', { class: 'trend-l' }, d.label),
+      h('div', { class: 'trend-v' + (d.inc - d.exp < 0 ? ' neg' : '') }, M(d.inc - d.exp))
+    ]));
+  });
+  card.appendChild(row);
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:11px;margin-top:8px;text-align:center' }, '每列：左柱=收入 · 右柱=支出 · 底部数字为当月结余'));
+  return card;
+}
+
+// 批量操作浮动条（流水页）
+function batchBar(projects) {
+  const ids = Object.keys(state.ledgerSel).filter((k) => state.ledgerSel[k]);
+  const bar = h('div', { class: 'batch-bar' }, [
+    h('span', { style: 'flex:1;font-size:13px;font-weight:600' }, '已选 ' + ids.length + ' 笔'),
+    h('button', { class: 'btn sm ghost', disabled: ids.length ? undefined : 'true', style: ids.length ? '' : 'opacity:.5', onclick: () => { if (!ids.length) { toast('请先勾选流水'); return; } batchMove(ids, projects); } }, '改项目'),
+    h('button', { class: 'btn sm danger', style: ids.length ? '' : 'opacity:.5', onclick: () => {
+      if (!ids.length) { toast('请先勾选流水'); return; }
+      confirmDialog('删除选中的 ' + ids.length + ' 笔流水（含对应凭证照片）？此操作不可撤销。', () => {
+        Promise.all(ids.map((id) => Transactions.get(id).then((t) => (t ? Transactions.remove(t) : null))))
+          .then(() => { state.ledgerSel = {}; toast('已删除 ' + ids.length + ' 笔'); render(); });
+      }, '批量删除');
+    } }, '删除'),
+    h('button', { class: 'btn sm ghost', onclick: () => { state.ledgerBatch = false; state.ledgerSel = {}; render(); } }, '退出')
+  ]);
+  return bar;
+}
+function batchMove(ids, projects) {
+  const f = h('div');
+  const s = h('select', {}, [h('option', { value: '' }, '请选择目标项目')].concat(projects.map((p) => h('option', { value: p.id }, p.name))));
+  field(f, '把选中的 ' + ids.length + ' 笔流水改到哪个项目？', s);
+  openModal('批量改所属项目', f, [
+    h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消'),
+    h('button', { class: 'btn primary', onclick: () => {
+      if (!s.value) { toast('请选择项目'); return; }
+      Promise.all(ids.map((id) => Transactions.get(id).then((t) => { if (t) { t.projectId = s.value; return Transactions.save(t); } return null; })))
+        .then(() => { state.ledgerSel = {}; closeModal(); toast('已改到目标项目'); render(); });
+    } }, '确认修改')
   ]);
 }
 
@@ -571,10 +710,14 @@ async function projectDetailView(id) {
   const p = await Projects.get(id);
   if (!p) { location.hash = '#/projects'; return h('div'); }
   setPageTitle(p.name || '项目');
+  const locked = p.status === 'settled';
+  const lockHint = () => toast('项目已结算归档锁定，请先在「编辑」中把状态改回再修改');
   const wrap = h('div');
 
   // 信息卡
   const info = h('div', { class: 'card' });
+  if (locked) info.appendChild(h('div', { style: 'background:rgba(47,129,247,.12);color:var(--accent);font-size:12px;padding:7px 10px;border-radius:8px;margin-bottom:10px' },
+    '🔒 本项目已结算归档，内容为只读。如需修改，请点「编辑」把状态改回「进行中」。'));
   info.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'font-weight:700;font-size:17px' }, p.name || '未命名'),
     h('span', { class: 'tag ' + (STATUS_MAP[p.status] || {}).cls }, (STATUS_MAP[p.status] || {}).label || '进行中')
@@ -595,6 +738,17 @@ async function projectDetailView(id) {
   });
   const editBtns = h('div', { class: 'btn-row' }, [
     h('button', { class: 'btn ghost', onclick: () => projectForm(p) }, '编辑'),
+    h('button', { class: 'btn ghost', title: '复制基本信息/阶段/预算计划为新项目', onclick: () => {
+      confirmDialog('以「' + (p.name || '该项目') + '」为模板新建项目？（复制基本信息、阶段与预算计划，阶段完成状态清空）', () => {
+        const np = Object.assign({}, p, {
+          id: uid(), name: (p.name || '未命名') + '（副本）', status: 'ongoing',
+          createdAt: Date.now(), updatedAt: Date.now(),
+          stages: (p.stages || []).map((s) => ({ id: uid(), name: s.name || '', done: false, date: '' })),
+          planItems: (p.planItems || []).map((it) => ({ id: uid(), cat: it.cat || '', amount: Number(it.amount) || 0 }))
+        });
+        Projects.save(np).then(() => { toast('已创建副本，请修改项目名称'); location.hash = '#/project/' + np.id; projectForm(np); });
+      }, '复制项目');
+    } }, '⧉ 复制'),
     h('button', { class: 'btn danger', onclick: () => confirmDialog('删除该项目会一并删除其下所有记账与提醒，确定？', () => {
       Projects.remove(p.id).then(() => { toast('已删除'); location.hash = '#/projects'; });
     }, '删除') }, '删除')
@@ -617,15 +771,21 @@ async function projectDetailView(id) {
       const row = h('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:8px' });
       const cb = h('input', { type: 'checkbox', style: 'width:18px;height:18px;flex:0 0 auto' });
       cb.checked = !!s.done;
+      cb.disabled = locked;
       cb.addEventListener('change', () => { s.done = cb.checked; if (s.done && !s.date) s.date = today(); Projects.save(p).then(render); });
       const nameWrap = h('div', { style: 'flex:1;min-width:0' }, [
         h('div', { style: 'font-weight:600;font-size:13px' }, s.name || '未命名阶段'),
         h('div', { class: 'meta', style: s.done ? 'color:var(--income)' : '' }, s.done ? '已完成' : '未完成')
       ]);
       const dt = h('input', { type: 'date', value: s.date || '', style: 'width:130px;flex:0 0 auto' });
+      if (locked) dt.disabled = true;
       dt.addEventListener('change', () => { s.date = dt.value; Projects.save(p).then(() => toast('已记录完成时间')); });
-      const del = h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×');
-      row.appendChild(cb); row.appendChild(nameWrap); row.appendChild(dt); row.appendChild(del);
+      if (!locked) {
+        const del = h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×');
+        row.appendChild(cb); row.appendChild(nameWrap); row.appendChild(dt); row.appendChild(del);
+      } else {
+        row.appendChild(cb); row.appendChild(nameWrap); row.appendChild(dt);
+      }
       stageCard.appendChild(row);
     });
   }
@@ -652,7 +812,7 @@ async function projectDetailView(id) {
     planCard.innerHTML = '';
     planCard.appendChild(h('div', { class: 'row-between' }, [
       h('div', { style: 'font-weight:700' }, '预算内计划付款（控支预警）'),
-      h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑')
+      locked ? null : h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑')
     ]));
     if (!planItems.length) {
       planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别。请到「项目编辑」中从设置类别库下拉选择添加'));
@@ -699,7 +859,7 @@ async function projectDetailView(id) {
   const remCard = h('div', { class: 'card' });
   remCard.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'font-weight:700' }, '收付款节点'),
-    h('button', { class: 'btn sm primary', onclick: () => reminderForm(id) }, '+ 节点')
+    locked ? null : h('button', { class: 'btn sm primary', onclick: () => reminderForm(id) }, '+ 节点')
   ]));
   if (!rems.length) remCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '暂无节点（提醒通知将在 P2 上线）'));
   else rems.forEach((r) => {
@@ -708,7 +868,7 @@ async function projectDetailView(id) {
         h('div', {}, (r.kind === 'receive' ? '收款·' : '付款·') + (r.title || '')),
         h('div', { class: 'meta' }, fmtDate(r.dueDate) + (r.amount ? ' · ' + M(r.amount) : '') + (r.done ? ' · 已完成' : ''))
       ]),
-      h('div', { style: 'display:flex;gap:6px' }, [
+      locked ? h('span') : h('div', { style: 'display:flex;gap:6px' }, [
         h('button', { class: 'btn sm ghost', onclick: () => { r.done = !r.done; Reminders.save(r).then(render); } }, r.done ? '↺' : '✓'),
         h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); reminderForm(id, r); } }, '✎'),
         h('button', { class: 'delete-x', onclick: () => { Reminders.remove(r.id).then(render); } }, '×')
@@ -735,9 +895,10 @@ async function projectDetailView(id) {
       ]);
       const right = h('div', { style: 'display:flex;align-items:center;gap:8px' }, [
         h('div', { class: 'amt ' + (isIncome(t) ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIncome(t) ? '+' : (isTr ? '↔' : '-')) + M(t.amount)),
-        h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, t); } }, '✎'),
-        h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？', () => { Transactions.remove(t).then(render); }); } }, '×')
-      ]);
+        locked ? null : h('button', { class: 'edit-x', title: '复制此笔为新记录', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, Object.assign({}, t, { __copy: true, date: today(), time: nowHm() })); } }, '⧉'),
+        locked ? null : h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, t); } }, '✎'),
+        locked ? null : h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？', () => { Transactions.remove(t).then(render); }); } }, '×')
+      ].filter(Boolean));
       const row = h('div', { class: 'tx' }, [left, right]);
       if (t.attachmentId) {
         const url = await attURL(t.attachmentId);
@@ -834,10 +995,88 @@ function partyCard(p, st, allTxs, allProjects) {
     card.appendChild(h('div', { class: 'sub', style: 'margin-top:6px' }, '已收合计：' + M(st.incomeTotal)));
   }
 
-  card.appendChild(h('div', { style: 'display:flex;justify-content:flex-end;margin-top:10px' }, [
+  card.appendChild(h('div', { style: 'display:flex;justify-content:flex-end;gap:10px;margin-top:10px' }, [
+    h('button', { class: 'btn sm ghost', onclick: (e) => { e.stopPropagation(); partyStatement(p, allTxs, allProjects); } }, '📋 对账单'),
     h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除该往来单位？', () => { Parties.remove(p.id).then(render); }); } }, '删除')
   ]));
   return card;
+}
+
+// 往来对账单：某单位全部流水 + 分类小计 + 一键标记付款状态
+function partyStatement(p, allTxs, allProjects) {
+  const rel = allTxs.filter((t) => t.partyId === p.id)
+    .slice().sort((a, b) => (fmtDate(b.date) + (b.time || '')).localeCompare(fmtDate(a.date) + (a.time || '')));
+  const pname = (id) => { const x = allProjects.find((p2) => p2.id === id); return x ? x.name : '未关联项目'; };
+  let pay = 0, rec = 0;
+  const byCat = {}, byProj = {};
+  rel.forEach((t) => {
+    const amt = Number(t.amount) || 0;
+    if (isExpense(t)) {
+      pay += amt;
+      const c = (t.category || '其他') + (t.subCat ? '·' + t.subCat : '');
+      byCat[c] = (byCat[c] || 0) + amt;
+      byProj[t.projectId] = (byProj[t.projectId] || 0) + amt;
+    } else if (isIncome(t)) {
+      rec += amt;
+      byProj[t.projectId] = (byProj[t.projectId] || 0) - amt;
+    }
+  });
+  const body = h('div');
+  body.appendChild(h('div', { class: 'row-between', style: 'font-weight:700' }, [
+    h('span', {}, p.name + '（' + partyTypeLabel(p.type) + '）'),
+    h('span', { class: 'tag ' + ((PAY_STATUS[p.payStatus] || {}).cls || 'unpaid') }, (PAY_STATUS[p.payStatus] || {}).label || '未付')
+  ]));
+  body.appendChild(h('div', { style: 'display:flex;gap:10px;margin-top:10px' }, [
+    h('div', { style: 'flex:1;background:rgba(224,101,79,.10);border-radius:10px;padding:8px;text-align:center' }, [
+      h('div', { class: 'muted', style: 'font-size:12px' }, '应付/已付合计'),
+      h('div', { class: 'amt expense', style: 'font-size:16px' }, M(pay))
+    ]),
+    h('div', { style: 'flex:1;background:rgba(76,175,120,.10);border-radius:10px;padding:8px;text-align:center' }, [
+      h('div', { class: 'muted', style: 'font-size:12px' }, '应收/已收合计'),
+      h('div', { class: 'amt income', style: 'font-size:16px' }, M(rec))
+    ])
+  ]));
+  if (Object.keys(byCat).length) {
+    body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '按分类小计'));
+    Object.keys(byCat).forEach((c) => {
+      body.appendChild(h('div', { class: 'row-between', style: 'margin-top:4px;font-size:13px' }, [
+        h('span', { class: 'muted' }, c), h('span', {}, M(byCat[c]))
+      ]));
+    });
+  }
+  if (Object.keys(byProj).length) {
+    body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '按项目小计（收为负/付为正）'));
+    Object.keys(byProj).forEach((pid) => {
+      const v = byProj[pid];
+      body.appendChild(h('div', { class: 'row-between', style: 'margin-top:4px;font-size:13px' }, [
+        h('span', { class: 'muted', style: 'max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, pname(pid)),
+        h('span', {}, (v >= 0 ? '付 ' : '收 ') + M(Math.abs(v)))
+      ]));
+    });
+  }
+  body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '流水明细（' + rel.length + ' 笔）'));
+  if (!rel.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '该单位暂无流水'));
+  rel.forEach((t) => {
+    const isIn = isIncome(t), isTr = isTransfer(t);
+    const title = isTr ? '转账' : (isIn ? (t.subType || '收入') : ((t.category || '') + (t.subCat ? '·' + t.subCat : '')));
+    body.appendChild(h('div', { class: 'tx' }, [
+      h('div', {}, [
+        h('div', {}, title),
+        h('div', { class: 'meta' }, fmtDate(t.date) + ' · ' + pname(t.projectId) + (t.note ? ' · ' + t.note : ''))
+      ]),
+      h('div', { class: 'amt ' + (isIn ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIn ? '+' : (isTr ? '↔' : '-')) + M(t.amount))
+    ]));
+  });
+  const acts = [h('button', { class: 'btn ghost', onclick: () => closeModal() }, '关闭')];
+  if (p.payStatus !== 'reconciled') {
+    acts.unshift(h('button', { class: 'btn primary', onclick: () => {
+      confirmDialog('确认与「' + p.name + '」的账目已核对无误？确认后付款状态将标记为「已对账」。', () => {
+        p.payStatus = 'reconciled';
+        Parties.save(p).then(() => { closeModal(); toast('已标记为已对账'); render(); });
+      }, '确认对账');
+    } }, '✅ 对账完成，标记已对账'));
+  }
+  openModal('往来对账单', body, acts);
 }
 
 // ---------- 设置 ----------
@@ -980,9 +1219,9 @@ async function settingsView() {
   });
   wrap.appendChild(treeCard);
 
-  // 记账模板
+  // 记账模板（完整维度：类型/金额/分类/账户/成员/商家/备注）
   const tplCard2 = h('div', { class: 'card' });
-  tplCard2.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '记账模板（流水页一键套用，省去重复填写）'));
+  tplCard2.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '记账模板（流水页一键套用；可预存类型/金额/分类/账户/成员/商家/备注）'));
   const tplList2 = h('div', { style: 'margin-top:8px' });
   tplCard2.appendChild(tplList2);
   getTemplates().then((tpls) => {
@@ -991,26 +1230,68 @@ async function settingsView() {
       if (!tpls.length) tplList2.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有模板，点下方「+ 添加模板」'));
       tpls.forEach((tp, i) => {
         const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
-        const nm = h('input', { value: tp.name || '', placeholder: '模板名称', style: 'flex:1;min-width:0' });
-        nm.addEventListener('input', () => { tpls[i].name = nm.value; });
-        const amt = h('input', { type: 'number', inputmode: 'decimal', value: tp.amount || '', placeholder: '金额', style: 'width:92px;flex:0 0 auto' });
-        amt.addEventListener('input', () => { tpls[i].amount = Number(amt.value) || 0; });
-        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { tpls.splice(i, 1); renderTpls(); } }, '×');
-        row.appendChild(nm); row.appendChild(amt); row.appendChild(del);
+        const label = (tp.type === 'income' ? '收·' : '支·') + (tp.name || '未命名') + (tp.amount ? ' · ' + fmtMoney(tp.amount) : '');
+        row.appendChild(h('button', { class: 'chip', style: 'flex:1;min-width:0;justify-content:flex-start', onclick: () => templateForm(tp, renderTpls) }, label));
+        row.appendChild(h('button', { class: 'delete-x', title: '删除', onclick: () => { tpls.splice(i, 1); saveTpls(); renderTpls(); } }, '×'));
         tplList2.appendChild(row);
       });
     }
+    function saveTpls() {
+      Meta.set('txTemplates', tpls).then(() => toast('已保存模板'));
+    }
     renderTpls();
-    tplCard2.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { tpls.push({ id: uid(), name: '', type: 'expense', amount: 0, category: '', note: '' }); renderTpls(); } }, '+ 添加模板'));
-    tplCard2.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
-      const cleaned = tpls.filter((x) => (x.name || '').trim()).map((x) => ({
-        id: x.id || uid(), name: x.name.trim(), type: x.type || 'expense',
-        amount: Number(x.amount) || 0, category: x.category || '', note: x.note || ''
-      }));
-      Meta.set('txTemplates', cleaned).then(() => toast('已保存模板'));
-    } }, '保存模板'));
+    tplCard2.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => {
+      const tp = { id: uid(), name: '', type: 'expense', amount: 0, category: '', account: '', memberId: '', merchantId: '', note: '' };
+      tpls.push(tp);
+      templateForm(tp, renderTpls);
+    } }, '+ 添加模板'));
   });
   wrap.appendChild(tplCard2);
+
+  // 备份与恢复（全量 JSON，含照片凭证）
+  const bkCard = h('div', { class: 'card' });
+  bkCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '备份与恢复（强烈建议定期备份：数据存在手机浏览器里，清缓存/换手机前务必导出）'));
+  const bkMsg = h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px;color:var(--income)' });
+  bkCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, [
+    h('button', { class: 'btn primary', onclick: async () => {
+      bkMsg.textContent = '正在打包数据…';
+      try {
+        const data = await exportAll();
+        const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '装修记账备份_' + today() + '.json';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        bkMsg.textContent = '✅ 备份文件已生成，请通过浏览器下载/分享保存（可发微信文件传输助手留存）';
+      } catch (e) { bkMsg.textContent = '❌ 备份失败：' + (e && e.message || e); }
+    } }, '⬇️ 导出备份'),
+    h('button', { class: 'btn ghost', onclick: () => bkFile.click() }, '⬆️ 导入恢复')
+  ]));
+  const bkFile = h('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
+  bkFile.addEventListener('change', (e) => {
+    const fl = e.target.files[0];
+    if (!fl) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let data = null;
+      try { data = JSON.parse(String(reader.result)); } catch (err) { toast('文件不是有效的备份'); return; }
+      if (!data || !data.stores) { toast('文件不是本应用的备份'); return; }
+      const n = (data.stores.transactions || []).length;
+      confirmDialog('导入将【清空并覆盖】当前所有数据，用备份里的 ' + n + ' 笔记账替换。确定继续？', async () => {
+        try {
+          await importAll(data);
+          toast('恢复成功，即将刷新');
+          setTimeout(() => location.reload(), 800);
+        } catch (err) { toast('恢复失败：' + (err && err.message || err)); }
+      }, '覆盖导入');
+    };
+    reader.readAsText(fl, 'utf-8');
+    e.target.value = '';
+  });
+  bkCard.appendChild(bkFile);
+  bkCard.appendChild(bkMsg);
+  wrap.appendChild(bkCard);
 
   wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:18px' }, '关于'));
   wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:13px;line-height:1.7' },
@@ -1165,8 +1446,10 @@ function projectForm(existing) {
 
 // ---------- 表单：记账（对齐参考：大金额+拍照、字段行式、二级分类、账户、成员/商家、时间到分、转账） ----------
 async function txForm(presetType, presetProject, existingTx, preset) {
-  const isEdit = !!existingTx;
-  let type = presetType || (existingTx && existingTx.type) || (preset && preset.type) || 'expense';
+  // existingTx.__copy=true 表示「复制上笔」：预填全部字段但保存为新记录
+  const srcTx = existingTx || null;
+  const isEdit = !!srcTx && !srcTx.__copy;
+  let type = presetType || (srcTx && srcTx.type) || (preset && preset.type) || 'expense';
   const [projects, parties, accounts, catTree] = await Promise.all([
     Projects.all(), Parties.all(), getAccounts(), getCatTree()
   ]);
@@ -1184,7 +1467,7 @@ async function txForm(presetType, presetProject, existingTx, preset) {
   const fileInp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
   const thumb = h('img', { class: 'thumb', style: 'display:none;margin-top:6px' });
   let photoFile = null;
-  let keepAttachId = isEdit ? (existingTx.attachmentId || null) : null;
+  let keepAttachId = isEdit ? (srcTx.attachmentId || null) : null;
   fileInp.addEventListener('change', (e) => {
     const fl = e.target.files[0];
     if (fl) { photoFile = fl; thumb.src = URL.createObjectURL(fl); thumb.style.display = 'block'; keepAttachId = null; }
@@ -1259,51 +1542,51 @@ async function txForm(presetType, presetProject, existingTx, preset) {
   function buildRows() {
     rows.innerHTML = '';
     // 旧数据兼容：老支出记录的往来单位没有区分成员/商家，编辑时按类型回填
-    const oldParty = isEdit ? parties.find((x) => x.id === existingTx.partyId) : null;
+    const oldParty = srcTx ? parties.find((x) => x.id === srcTx.partyId) : null;
     const oldIsMember = !!oldParty && ['worker', 'manager', 'designer'].indexOf(oldParty.type) >= 0;
     const oldIsMerch = !!oldParty && (oldParty.type === 'supplier' || oldParty.type === 'other');
 
     projSel = sel([h('option', { value: '' }, '请选择项目')].concat(projects.map((p) => h('option', { value: p.id }, p.name))),
-      isEdit ? (existingTx.projectId || '') : (presetProject || ''));
+      srcTx ? (srcTx.projectId || '') : (presetProject || ''));
     rows.appendChild(row('📁', '项目', projSel, () => { projSel.value = ''; }));
 
     if (type === 'transfer') {
-      fromSel = sel(accOptions(), isEdit ? (existingTx.fromAccount || '') : '');
-      toSel = sel(accOptions(), isEdit ? (existingTx.toAccount || '') : '');
+      fromSel = sel(accOptions(), srcTx ? (srcTx.fromAccount || '') : ((preset && preset.fromAccount) || ''));
+      toSel = sel(accOptions(), srcTx ? (srcTx.toAccount || '') : ((preset && preset.toAccount) || ''));
       rows.appendChild(row('💳', '转出账户', fromSel, () => { fromSel.value = ''; }));
       rows.appendChild(row('💰', '转入账户', toSel, () => { toSel.value = ''; }));
       dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
       rows.appendChild(row('🕐', '时间', dtSel));
-      noteSel = h('textarea', { class: 'ctl', rows: 2 }, isEdit ? (existingTx.note || '') : ((preset && preset.note) || ''));
+      noteSel = h('textarea', { class: 'ctl', rows: 2 }, srcTx ? (srcTx.note || '') : ((preset && preset.note) || ''));
       rows.appendChild(row('📝', '备注', noteSel, null, micBtn(noteSel)));
       return;
     }
 
     if (type === 'income') {
-      subTypeSel = sel(INCOME_TYPES.map((x) => h('option', {}, x)), isEdit ? (existingTx.subType || INCOME_TYPES[0]) : INCOME_TYPES[0]);
+      subTypeSel = sel(INCOME_TYPES.map((x) => h('option', {}, x)), srcTx ? (srcTx.subType || INCOME_TYPES[0]) : ((preset && preset.subType) || INCOME_TYPES[0]));
       rows.appendChild(row('📌', '款项类型', subTypeSel));
       const clients = parties.filter((p) => p.type === 'client');
-      memberSel = sel(partyOptions(clients, '选择客户'), isEdit ? (existingTx.partyId || '') : '');
+      memberSel = sel(partyOptions(clients, '选择客户'), srcTx ? (srcTx.partyId || '') : ((preset && preset.memberId) || ''));
       rows.appendChild(row('👤', '客户', memberSel, () => { memberSel.value = ''; }));
-      acctSel = sel(accOptions(), isEdit ? (existingTx.account || existingTx.method || '') : '');
+      acctSel = sel(accOptions(), srcTx ? (srcTx.account || srcTx.method || '') : ((preset && preset.account) || ''));
       rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }));
-      invSel = sel([h('option', {}, '未开'), h('option', {}, '已开')], isEdit ? (existingTx.invoiceStatus || '未开') : '未开');
+      invSel = sel([h('option', {}, '未开'), h('option', {}, '已开')], srcTx ? (srcTx.invoiceStatus || '未开') : '未开');
       rows.appendChild(row('🧾', '开票状态', invSel));
-      invTypeSel = sel([h('option', {}, '普票'), h('option', {}, '专票'), h('option', {}, '—')], isEdit ? (existingTx.invoiceType || '普票') : '普票');
+      invTypeSel = sel([h('option', {}, '普票'), h('option', {}, '专票'), h('option', {}, '—')], srcTx ? (srcTx.invoiceType || '普票') : '普票');
       rows.appendChild(row('📄', '发票类型', invTypeSel));
       taxSel = h('input', { class: 'ctl', type: 'number', inputmode: 'decimal', placeholder: '选填' });
-      taxSel.value = isEdit && existingTx.taxAmount ? existingTx.taxAmount : '';
+      taxSel.value = srcTx && srcTx.taxAmount ? srcTx.taxAmount : '';
       rows.appendChild(row('💴', '税额（元）', taxSel, () => { taxSel.value = ''; }));
       dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
       rows.appendChild(row('🕐', '时间', dtSel));
-      noteSel = h('textarea', { class: 'ctl', rows: 2 }, isEdit ? (existingTx.note || '') : ((preset && preset.note) || ''));
+      noteSel = h('textarea', { class: 'ctl', rows: 2 }, srcTx ? (srcTx.note || '') : ((preset && preset.note) || ''));
       rows.appendChild(row('📝', '备注', noteSel, null, micBtn(noteSel)));
       return;
     }
 
     // 支出
     const firstCat = catTree.length ? catTree[0].name : '材料费';
-    catSel = sel(catTree.map((c) => h('option', { value: c.name }, c.name)), isEdit ? (existingTx.category || firstCat) : ((preset && preset.category) || firstCat));
+    catSel = sel(catTree.map((c) => h('option', { value: c.name }, c.name)), srcTx ? (srcTx.category || firstCat) : ((preset && preset.category) || firstCat));
     subSel = sel([]);
     function fillSubs() {
       const c = catTree.find((x) => x.name === catSel.value);
@@ -1311,33 +1594,33 @@ async function txForm(presetType, presetProject, existingTx, preset) {
       subSel.innerHTML = '';
       subSel.appendChild(h('option', { value: '' }, '（不选）'));
       subs.forEach((s) => subSel.appendChild(h('option', { value: s.name }, s.name)));
-      if (isEdit && existingTx.subCat) subSel.value = existingTx.subCat;
+      if (srcTx && srcTx.subCat) subSel.value = srcTx.subCat;
     }
     fillSubs();
     catSel.addEventListener('change', fillSubs);
     const catWrap = h('div', { class: 'ctl-row' }, [catSel, h('span', { class: 'ctl-sep' }, '＞'), subSel]);
     rows.appendChild(row('🗂', '分类', catWrap, () => { catSel.value = ''; subSel.value = ''; }));
 
-    acctSel = sel(accOptions(), isEdit ? (existingTx.account || existingTx.method || '') : '');
+    acctSel = sel(accOptions(), srcTx ? (srcTx.account || srcTx.method || '') : ((preset && preset.account) || ''));
     rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }));
 
     const members = parties.filter((p) => ['worker', 'manager', 'designer'].indexOf(p.type) >= 0);
-    memberSel = sel(partyOptions(members, '选择成员'), isEdit ? (existingTx.memberId || (oldIsMember ? oldParty.id : '')) : '');
+    memberSel = sel(partyOptions(members, '选择成员'), srcTx ? (srcTx.memberId || (oldIsMember ? oldParty.id : '')) : ((preset && preset.memberId) || ''));
     rows.appendChild(row('👷', '成员', memberSel, () => { memberSel.value = ''; }));
 
     const merchs = parties.filter((p) => p.type === 'supplier' || p.type === 'other');
-    merchSel = sel(partyOptions(merchs, '选择商家'), isEdit ? (existingTx.merchantId || (oldIsMerch ? oldParty.id : '')) : '');
+    merchSel = sel(partyOptions(merchs, '选择商家'), srcTx ? (srcTx.merchantId || (oldIsMerch ? oldParty.id : '')) : ((preset && preset.merchantId) || ''));
     rows.appendChild(row('🏪', '商家', merchSel, () => { merchSel.value = ''; }));
 
     newPartySel = h('input', { class: 'ctl', placeholder: '或新建往来单位名称' });
     rows.appendChild(row('➕', '新建单位', newPartySel));
 
-    regionSel = sel([h('option', {}, '—')].concat(REGIONS.map((x) => h('option', {}, x))), isEdit ? (existingTx.region || '—') : '—');
+    regionSel = sel([h('option', {}, '—')].concat(REGIONS.map((x) => h('option', {}, x))), srcTx ? (srcTx.region || '—') : ((preset && preset.region) || '—'));
     rows.appendChild(row('📍', '施工区域', regionSel));
-    tradeSel = sel([h('option', {}, '—')].concat(TRADES.map((x) => h('option', {}, x))), isEdit ? (existingTx.trade || '—') : '—');
+    tradeSel = sel([h('option', {}, '—')].concat(TRADES.map((x) => h('option', {}, x))), srcTx ? (srcTx.trade || '—') : ((preset && preset.trade) || '—'));
     rows.appendChild(row('🛠', '工种', tradeSel));
     matSel = h('input', { class: 'ctl', placeholder: '如：瓷砖/电线/腻子' });
-    matSel.value = isEdit ? (existingTx.material || '') : '';
+    matSel.value = srcTx ? (srcTx.material || '') : ((preset && preset.material) || '');
     rows.appendChild(row('📦', '材料大类', matSel));
 
     planSel = sel([h('option', { value: '' }, '不计入计划/未选')]);
@@ -1351,7 +1634,7 @@ async function txForm(presetType, presetProject, existingTx, preset) {
           planSel.appendChild(h('option', { value: it.id }, it.cat + (it.amount ? '（计划' + it.amount + '）' : '')));
         });
       }
-      if (isEdit && existingTx.planCat) planSel.value = existingTx.planCat;
+      if (srcTx && srcTx.planCat) planSel.value = srcTx.planCat;
     }
     fillPlan();
     projSel.addEventListener('change', fillPlan);
@@ -1359,12 +1642,22 @@ async function txForm(presetType, presetProject, existingTx, preset) {
 
     dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
     rows.appendChild(row('🕐', '时间', dtSel));
-    noteSel = h('textarea', { class: 'ctl', rows: 2 }, isEdit ? (existingTx.note || '') : ((preset && preset.note) || ''));
+    noteSel = h('textarea', { class: 'ctl', rows: 2 }, srcTx ? (srcTx.note || '') : ((preset && preset.note) || ''));
     rows.appendChild(row('📝', '备注', noteSel, null, micBtn(noteSel)));
   }
 
   buildRows();
-  amount.value = isEdit ? (existingTx.amount || '') : ((preset && preset.amount) || '');
+  amount.value = srcTx ? (srcTx.amount || '') : ((preset && preset.amount) || '');
+
+  // 连续记账：保存成功后弹窗不关、清空可继续记，顶部显示本次累计
+  let savedCount = 0, savedSum = 0;
+  const savedBadge = h('div', { style: 'display:none;font-size:13px;text-align:center;margin-top:12px;padding:8px 10px;border-radius:10px;background:rgba(76,175,120,.12);color:var(--income)' });
+  f.appendChild(savedBadge);
+  function updateSaved() {
+    if (!savedCount) { savedBadge.style.display = 'none'; return; }
+    savedBadge.style.display = 'block';
+    savedBadge.textContent = '✅ 本次已连续记录 ' + savedCount + ' 笔 · 合计 ' + fmtMoney(savedSum) + '。可继续填写下一笔，或点下方「完成」关闭';
+  }
 
   if (keepAttachId) {
     const url = await attURL(keepAttachId);
@@ -1377,13 +1670,13 @@ async function txForm(presetType, presetProject, existingTx, preset) {
     const amt = Number(amount.value);
     if (!amt || amt <= 0) { toast('请输入正确金额'); return; }
     const t = {
-      id: isEdit ? existingTx.id : uid(),
+      id: isEdit ? srcTx.id : uid(),
       projectId: pid, type,
       amount: amt,
       date: dtSel.value ? dtSel.value.slice(0, 10) : today(),
       time: dtSel.value ? dtSel.value.slice(11, 16) : '',
       note: noteSel ? noteSel.value.trim() : '',
-      createdAt: isEdit ? (existingTx.createdAt || Date.now()) : Date.now()
+      createdAt: isEdit ? (srcTx.createdAt || Date.now()) : Date.now()
     };
     if (type === 'transfer') {
       if (!fromSel.value || !toSel.value) { toast('请选择转出与转入账户'); return; }
@@ -1396,10 +1689,10 @@ async function txForm(presetType, presetProject, existingTx, preset) {
       t.taxAmount = Number(taxSel.value) || 0;
       t.account = acctSel.value; t.method = acctSel.value;
       let cid = memberSel.value;
-      if (!cid && isEdit && existingTx.partyId) cid = existingTx.partyId;
+      if (!cid && srcTx && srcTx.partyId) cid = srcTx.partyId;
       const cp = parties.find((x) => x.id === cid);
       t.partyId = cid || '';
-      t.partyName = cp ? cp.name : (isEdit ? (existingTx.partyName || '') : '');
+      t.partyName = cp ? cp.name : (srcTx ? (srcTx.partyName || '') : '');
     } else {
       t.category = catSel.value; t.subCat = subSel.value;
       t.account = acctSel.value; t.method = acctSel.value;
@@ -1416,8 +1709,8 @@ async function txForm(presetType, presetProject, existingTx, preset) {
       if (newName) {
         const np = { id: uid(), name: newName, type: 'supplier', createdAt: Date.now() };
         await Parties.save(np); partyId = np.id; partyName = newName;
-      } else if (!partyId && isEdit && existingTx.partyId) {
-        partyId = existingTx.partyId; partyName = existingTx.partyName || '';
+      } else if (!partyId && srcTx && srcTx.partyId) {
+        partyId = srcTx.partyId; partyName = srcTx.partyName || '';
       }
       t.partyId = partyId; t.partyName = partyName;
     }
@@ -1428,7 +1721,18 @@ async function txForm(presetType, presetProject, existingTx, preset) {
     } else if (keepAttachId) {
       t.attachmentId = keepAttachId;
     }
-    Transactions.save(t).then(() => { closeModal(); toast(isEdit ? '已更新' : '已记录'); render(); });
+    Transactions.save(t).then(() => {
+      if (isEdit || srcTx) { closeModal(); toast(isEdit ? '已更新' : '已记录'); render(); return; }
+      // 新建：连续记账模式——弹窗不关，清空金额/备注/照片继续记
+      savedCount++; savedSum += amt;
+      amount.value = ''; if (noteSel) noteSel.value = '';
+      photoFile = null; thumb.style.display = 'none'; keepAttachId = null; fileInp.value = '';
+      if (newPartySel) newPartySel.value = '';
+      updateSaved();
+      buildActs();
+      toast('已记录（第 ' + savedCount + ' 笔）');
+      render();
+    });
   };
 
   const save = h('button', { class: 'btn primary', onclick: doSave }, isEdit ? '保存修改' : '保存');
@@ -1437,6 +1741,9 @@ async function txForm(presetType, presetProject, existingTx, preset) {
     actBox.innerHTML = '';
     actBox.appendChild(save);
     const subBtns = [];
+    if (savedCount > 0) {
+      subBtns.push(h('button', { class: 'btn ghost', onclick: () => closeModal() }, '完成（已记 ' + savedCount + ' 笔）'));
+    }
     if (type !== 'transfer') {
       subBtns.push(h('button', { class: 'btn ghost', onclick: () => { setType('transfer'); toast('已切换为转账，请选择转出/转入账户'); } }, '改为转账'));
     }
@@ -1452,6 +1759,53 @@ async function txForm(presetType, presetProject, existingTx, preset) {
   }
   buildActs();
   openModal(isEdit ? '编辑记账' : '记一笔', f, [actBox]);
+}
+
+// ---------- 表单：记账模板（完整维度） ----------
+async function templateForm(tp, onSaved) {
+  const [accounts, catTree, parties] = await Promise.all([getAccounts(), getCatTree(), Parties.all()]);
+  const f = h('div');
+  const name = field(f, '模板名称', h('input', { value: tp.name || '', placeholder: '如：老张木工日结' }));
+  const typeWrap = h('div', { class: 'field' }, [h('label', {}, '类型')]);
+  const seg = h('div', { class: 'seg' });
+  const bEx = h('button', { class: tp.type !== 'income' ? 'on' : '', onclick: () => { tp.type = 'expense'; bEx.classList.add('on'); bIn.classList.remove('on'); } }, '支出');
+  const bIn = h('button', { class: tp.type === 'income' ? 'on' : '', onclick: () => { tp.type = 'income'; bIn.classList.add('on'); bEx.classList.remove('on'); } }, '收入');
+  seg.appendChild(bEx); seg.appendChild(bIn);
+  typeWrap.appendChild(seg); f.appendChild(typeWrap);
+  const amount = field(f, '金额（0=每次手动填）', h('input', { type: 'number', inputmode: 'decimal', value: tp.amount || '' }));
+  const cat = field(f, '分类（支出）/ 款项类型（收入）', h('input', { value: tp.category || '', placeholder: '如：材料费 / 进度款' }));
+  const acct = field(f, '账户', (() => {
+    const s = h('select', {}, [h('option', { value: '' }, '不预设')].concat(accounts.map((a) => h('option', { value: a.name }, a.name))));
+    if (tp.account) s.value = tp.account;
+    return s;
+  })());
+  const members = parties.filter((p) => ['worker', 'manager', 'designer'].indexOf(p.type) >= 0);
+  const member = field(f, '成员（工人/经理/设计师）', (() => {
+    const s = h('select', {}, [h('option', { value: '' }, '不预设')].concat(members.map((p) => h('option', { value: p.id }, p.name))));
+    if (tp.memberId) s.value = tp.memberId;
+    return s;
+  })());
+  const merchs = parties.filter((p) => p.type === 'supplier' || p.type === 'other');
+  const merchant = field(f, '商家（供应商）', (() => {
+    const s = h('select', {}, [h('option', { value: '' }, '不预设')].concat(merchs.map((p) => h('option', { value: p.id }, p.name))));
+    if (tp.merchantId) s.value = tp.merchantId;
+    return s;
+  })());
+  const note = field(f, '备注', h('textarea', { rows: 2 }, tp.note || ''));
+  const save = h('button', { class: 'btn primary', onclick: () => {
+    tp.name = name.value.trim(); if (!tp.name) { toast('请填模板名称'); return; }
+    tp.amount = Number(amount.value) || 0;
+    tp.category = cat.value.trim();
+    tp.account = acct.value; tp.memberId = member.value; tp.merchantId = merchant.value;
+    tp.note = note.value.trim();
+    Meta.get('txTemplates', []).then((list) => {
+      const idx = list.findIndex((x) => x.id === tp.id);
+      if (idx >= 0) list[idx] = tp; else list.push(tp);
+      Meta.set('txTemplates', list).then(() => { closeModal(); toast('已保存模板'); if (onSaved) onSaved(); });
+    });
+  } }, '保存模板');
+  const cancel = h('button', { class: 'btn ghost', onclick: () => { if (onSaved) onSaved(); closeModal(); } }, '取消');
+  openModal('编辑记账模板', f, [cancel, save]);
 }
 
 // ---------- 表单：往来单位 ----------

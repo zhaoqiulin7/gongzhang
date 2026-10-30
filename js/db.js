@@ -19,6 +19,7 @@ let backend = null; // 'idb' | 'mem'
 let _idb = null;
 let _mem = null;
 let _ready = null;
+let _backendSettled = false; // 后端一旦选定不再切换（模块级，供 finish/startMem 共用）
 
 function uid() {
   return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
@@ -105,9 +106,24 @@ function queryByIndex(store, ix, value) {
 function initBackend() {
   if (_ready) return _ready;
   _ready = new Promise((resolve) => {
-    if (typeof indexedDB === 'undefined') { startMem(resolve); return; }
-    let settled = false;
-    const finish = (mode) => { if (!settled) { settled = true; backend = mode; resolve(); } };
+    const finishIdb = () => {
+      if (_backendSettled) return;
+      _backendSettled = true;
+      backend = 'idb';
+      resolve();
+    };
+    // 关键：内存模式一旦生效就锁定，防止迟到的 indexedDB.open 成功回调把
+    // backend 从 mem 强切到 idb（会导致演示数据/已录数据"凭空消失"）
+    const finishMem = () => {
+      if (_backendSettled) return;
+      _backendSettled = true;
+      backend = 'mem';
+      _mem = makeMem();
+      try { seedDemo(); } catch (e) { /* ignore */ }
+      try { showBanner(); } catch (e) { /* ignore */ }
+      resolve();
+    };
+    if (typeof indexedDB === 'undefined') { finishMem(); return; }
     try {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = (e) => {
@@ -119,24 +135,16 @@ function initBackend() {
           }
         }
       };
-      req.onsuccess = () => { _idb = req.result; finish('idb'); };
-      req.onerror = () => { startMem(resolve); };
+      req.onsuccess = () => { _idb = req.result; finishIdb(); };
+      req.onerror = () => finishMem();
       // 极少数环境下 open 既不成功也不报错（挂起）——加超时兜底
-      setTimeout(() => { if (!settled) startMem(resolve); }, 2000);
+      setTimeout(() => { if (!_backendSettled) finishMem(); }, 2000);
     } catch (e) {
       // 受限沙箱通常在这里同步抛 SecurityError
-      startMem(resolve);
+      finishMem();
     }
   });
   return _ready;
-}
-function startMem(resolve) {
-  if (backend) { resolve(); return; }
-  backend = 'mem';
-  _mem = makeMem();
-  try { seedDemo(); } catch (e) { /* ignore */ }
-  try { showBanner(); } catch (e) { /* ignore */ }
-  resolve();
 }
 
 function showBanner() {
@@ -249,7 +257,65 @@ const Meta = {
 
 function openDB() { return initBackend(); }
 
+// ---------------- 全量备份 / 恢复 ----------------
+function blobToB64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+function b64ToBlob(b64, fallbackType) {
+  const comma = b64.indexOf(',');
+  const meta = b64.slice(0, comma);
+  const mime = (meta.match(/data:([^;]+)/) || [])[1] || fallbackType || 'application/octet-stream';
+  const bin = atob(b64.slice(comma + 1));
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+const BACKUP_STORES = ['projects', 'transactions', 'parties', 'reminders', 'attachments', 'meta'];
+async function exportAll() {
+  await initBackend();
+  const out = { app: 'decor-accounting', schema: 1, exportedAt: new Date().toISOString(), stores: {} };
+  for (const name of BACKUP_STORES) {
+    const recs = await getAll(name);
+    if (name === 'attachments') {
+      const list = [];
+      for (const a of recs) {
+        list.push({
+          id: a.id, type: a.type || '', createdAt: a.createdAt || 0,
+          b64: (a.blob instanceof Blob) ? await blobToB64(a.blob) : ''
+        });
+      }
+      out.stores[name] = list;
+    } else {
+      out.stores[name] = recs;
+    }
+  }
+  return out;
+}
+async function importAll(data) {
+  if (!data || !data.stores) throw new Error('备份文件格式不正确');
+  await initBackend();
+  for (const name of BACKUP_STORES) {
+    if (backend === 'idb') await idbReq(idbTx(name, 'readwrite').clear());
+    else { _mem[name].recs.clear(); Object.keys(_mem[name].idx).forEach((k) => _mem[name].idx[k].clear()); }
+  }
+  for (const name of BACKUP_STORES) {
+    const recs = data.stores[name] || [];
+    for (const r of recs) {
+      if (name === 'attachments') {
+        put('attachments', { id: r.id, type: r.type || '', createdAt: r.createdAt || 0, blob: r.b64 ? b64ToBlob(r.b64, r.type) : new Blob([], { type: 'text/plain' }) });
+      } else {
+        put(name, r);
+      }
+    }
+  }
+}
+
 // 立即启动后端探测（在受限环境会同步切到内存模式并展示演示数据）
 initBackend();
 
-export { openDB, uid, Projects, Transactions, Parties, Attachments, Reminders, Meta };
+export { openDB, uid, Projects, Transactions, Parties, Attachments, Reminders, Meta, exportAll, importAll };
