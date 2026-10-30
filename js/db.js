@@ -154,8 +154,10 @@ function seedDemo() {
   const PA = (o) => memPut('parties', Object.assign({ createdAt: now }, o));
   const R = (o) => memPut('reminders', Object.assign({ createdAt: now, done: false }, o));
 
-  P({ id: 'p1', name: '保利香槟 3-1201 王先生', customer: '王先生', phone: '138****0011', address: '保利香槟 3栋1201', contract: 80000, budget: 60000, startDate: '2026-09-01', endDate: '2026-11-30', status: 'ongoing' });
-  P({ id: 'p2', name: '绿地城 5-802 李女士', customer: '李女士', phone: '139****0022', address: '绿地城 5栋802', contract: 120000, budget: 95000, startDate: '2026-10-10', endDate: '2026-12-20', status: 'ongoing' });
+  P({ id: 'p1', name: '保利香槟 3-1201 王先生', clientName: '王先生', phone: '138****0011', address: '保利香槟 3栋1201', houseType: '三室两厅', buildArea: 89, constructArea: 89, manager: '老陈', designer: '设计部·林', contractAmount: 80000, costBudget: 60000, startDate: '2026-09-01', endDate: '2026-11-30', status: 'ongoing',
+    stages: [ { id: 'p1s1', name: '开工', done: true, date: '2026-09-01' }, { id: 'p1s2', name: '水电施工', done: true, date: '2026-09-10' }, { id: 'p1s3', name: '水电验收', done: true, date: '2026-09-18' }, { id: 'p1s4', name: '泥工进场', done: false, date: '' }, { id: 'p1s5', name: '木工交底', done: false, date: '' }, { id: 'p1s6', name: '竣工', done: false, date: '' } ] });
+  P({ id: 'p2', name: '绿地城 5-802 李女士', clientName: '李女士', phone: '139****0022', address: '绿地城 5栋802', houseType: '四室两厅', buildArea: 120, constructArea: 120, manager: '老陈', designer: '设计部·林', contractAmount: 120000, costBudget: 95000, startDate: '2026-10-10', endDate: '2026-12-20', status: 'ongoing',
+    stages: [ { id: 'p2s1', name: '开工', done: false, date: '' }, { id: 'p2s2', name: '水电施工', done: false, date: '' }, { id: 'p2s3', name: '水电验收', done: false, date: '' }, { id: 'p2s4', name: '泥工进场', done: false, date: '' }, { id: 'p2s5', name: '木工交底', done: false, date: '' }, { id: 'p2s6', name: '竣工', done: false, date: '' } ] });
 
   PA({ id: 'pa1', name: '佛山瓷砖批发·陈老板', type: 'supplier', phone: '', note: '主材供应商' });
   PA({ id: 'pa2', name: '木工·老张', type: 'worker', phone: '', note: '木工班组' });
@@ -171,6 +173,7 @@ function seedDemo() {
   R({ id: 'r2', projectId: 'p1', kind: 'pay', title: '瓷砖尾款', amount: 5000, dueDate: '2026-11-02', note: '付陈老板瓷砖尾款' });
 
   memPut('meta', { key: 'remindDays', value: 3 });
+  memPut('meta', { key: 'stageTemplate', value: [ { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' }, { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' } ] });
 }
 
 // ---------------- 对外 API ----------------

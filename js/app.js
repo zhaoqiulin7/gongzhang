@@ -6,6 +6,12 @@ import {
 
 const state = { projectId: null };
 
+// 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
+const DEFAULT_STAGES = [
+  { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' },
+  { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' }
+];
+
 // ---------- 计算 ----------
 async function projStats(pid) {
   const txs = await Transactions.byProject(pid);
@@ -161,6 +167,8 @@ async function projectDetailView(id) {
   ]));
   const fields = [
     ['客户', p.clientName], ['电话', p.phone], ['地址', p.address],
+    ['户型', p.houseType], ['建筑面积', p.buildArea ? p.buildArea + ' ㎡' : '—'], ['施工面积', p.constructArea ? p.constructArea + ' ㎡' : '—'],
+    ['施工经理', p.manager], ['设计师', p.designer],
     ['合同金额', p.contractAmount ? fmtMoney(p.contractAmount) : '—'],
     ['成本预算', p.costBudget ? fmtMoney(p.costBudget) : '（未设，默认=合同额）'],
     ['开工', fmtDate(p.startDate)], ['竣工', fmtDate(p.endDate)], ['备注', p.note]
@@ -179,6 +187,32 @@ async function projectDetailView(id) {
   ]);
   info.appendChild(editBtns);
   wrap.appendChild(info);
+
+  // 施工阶段进度
+  const stageCard = h('div', { class: 'card' });
+  const stages = p.stages || [];
+  const doneN = stages.filter((s) => s.done).length;
+  stageCard.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'font-weight:700' }, '施工阶段（' + doneN + '/' + stages.length + '）'),
+    h('button', { class: 'btn sm primary', onclick: () => projectForm(p) }, '编辑阶段')
+  ]));
+  if (!stages.length) {
+    stageCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置阶段，点「编辑阶段」或项目「编辑」添加'));
+  } else {
+    stages.forEach((s) => {
+      stageCard.appendChild(h('div', { class: 'tx' }, [
+        h('div', {}, [
+          h('div', {}, s.name || '未命名阶段'),
+          h('div', { class: 'meta' }, (s.date ? fmtDate(s.date) : '未排期') + (s.done ? ' · 已完成' : ''))
+        ]),
+        h('div', { style: 'display:flex;gap:6px' }, [
+          h('button', { class: 'btn sm ghost', onclick: () => { s.done = !s.done; if (s.done && !s.date) s.date = today(); Projects.save(p).then(render); } }, s.done ? '↺' : '✓'),
+          h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×')
+        ])
+      ]));
+    });
+  }
+  wrap.appendChild(stageCard);
 
   // 利润卡
   const st = await projStats(id);
@@ -277,6 +311,32 @@ async function settingsView() {
   } }, '保存'));
   wrap.appendChild(rCard);
 
+  // 施工阶段模板
+  const stageTplCard = h('div', { class: 'card' });
+  stageTplCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '默认施工阶段（新建项目自动带入，可自主增删）'));
+  const tplList = h('div', { style: 'margin-top:8px' });
+  stageTplCard.appendChild(tplList);
+  Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
+    function renderTpl() {
+      tplList.innerHTML = '';
+      tpl.forEach((t, i) => {
+        const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+        const nm = h('input', { value: t.name || '', style: 'flex:1;min-width:0' });
+        nm.addEventListener('input', () => { tpl[i].name = nm.value; });
+        const del = h('button', { class: 'delete-x', onclick: () => { tpl.splice(i, 1); renderTpl(); } }, '×');
+        row.appendChild(nm); row.appendChild(del);
+        tplList.appendChild(row);
+      });
+    }
+    renderTpl();
+    stageTplCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { tpl.push({ id: uid(), name: '' }); renderTpl(); } }, '+ 添加阶段'));
+    stageTplCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+      const cleaned = tpl.map((t) => ({ id: t.id || uid(), name: (t.name || '').trim() })).filter((t) => t.name);
+      Meta.set('stageTemplate', cleaned).then(() => toast('已保存模板'));
+    } }, '保存模板'));
+  });
+  wrap.appendChild(stageTplCard);
+
   wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:18px' }, '关于'));
   wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:13px;line-height:1.7' },
     '装修记账 · 本地版（PWA）。所有数据仅保存在本机浏览器，不上传任何服务器。可在安卓 Chrome 中“添加到主屏幕”当作 App 使用。当前为 P1：项目管理、记账（含照片/开票/更细维度）、往来单位、首页看板。'));
@@ -289,10 +349,24 @@ function projectForm(existing) {
   const p = existing || { id: uid(), status: 'ongoing' };
   const isEdit = !!existing;
   const f = h('div');
+  const stages = (p.stages && p.stages.length)
+    ? p.stages.map((s) => ({ id: s.id || uid(), name: s.name || '', done: !!s.done, date: s.date || '' }))
+    : [];
+  if (!isEdit) {
+    Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
+      tpl.forEach((t) => stages.push({ id: uid(), name: t.name || '', done: false, date: '' }));
+      renderStages();
+    });
+  }
   const name = field(f, '项目名称', h('input', { value: p.name || '', placeholder: '如：张三家客厅翻新' }));
   const clientName = field(f, '客户姓名', h('input', { value: p.clientName || '' }));
   const phone = field(f, '电话', h('input', { value: p.phone || '', type: 'tel' }));
   const address = field(f, '房屋地址', h('input', { value: p.address || '' }));
+  const houseType = field(f, '户型', h('input', { value: p.houseType || '', placeholder: '如：三室两厅' }));
+  const buildArea = field(f, '建筑面积（㎡）', h('input', { value: p.buildArea || '', type: 'number', inputmode: 'decimal' }));
+  const constructArea = field(f, '施工面积（㎡）', h('input', { value: p.constructArea || '', type: 'number', inputmode: 'decimal' }));
+  const manager = field(f, '施工经理', h('input', { value: p.manager || '' }));
+  const designer = field(f, '设计师', h('input', { value: p.designer || '' }));
   const contract = field(f, '合同金额（元）', h('input', { value: p.contractAmount || '', type: 'number', inputmode: 'decimal' }));
   const budget = field(f, '成本预算（元，留空=按合同额）', h('input', { value: p.costBudget || '', type: 'number', inputmode: 'decimal' }));
   const startD = field(f, '开工日期', h('input', { value: fmtDate(p.startDate) || today(), type: 'date' }));
@@ -308,16 +382,53 @@ function projectForm(existing) {
   f.appendChild(statusWrap);
   field(f, '备注', h('textarea', {}, p.note || ''));
 
+  // 施工阶段（可自主添加；新项目自动带入模板）
+  const stageBox = h('div', { class: 'field' }, [h('label', {}, '施工阶段（可自主添加）')]);
+  const stageList = h('div', { style: 'margin-top:6px' });
+  stageBox.appendChild(stageList);
+  function renderStages() {
+    stageList.innerHTML = '';
+    stages.forEach((s, i) => {
+      const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+      const cb = h('input', { type: 'checkbox' }); cb.checked = !!s.done;
+      cb.addEventListener('change', () => { s.done = cb.checked; });
+      const nm = h('input', { value: s.name || '', placeholder: '阶段名称', style: 'flex:1;min-width:0' });
+      nm.addEventListener('input', () => { s.name = nm.value; });
+      const dt = h('input', { type: 'date', value: s.date || '', style: 'width:132px' });
+      dt.addEventListener('input', () => { s.date = dt.value; });
+      const del = h('button', { class: 'delete-x', onclick: () => { stages.splice(i, 1); renderStages(); } }, '×');
+      row.appendChild(cb); row.appendChild(nm); row.appendChild(dt); row.appendChild(del);
+      stageList.appendChild(row);
+    });
+  }
+  renderStages();
+  const stageBtns = h('div', { style: 'display:flex;gap:6px;margin-top:8px' });
+  stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => { stages.push({ id: uid(), name: '', done: false, date: '' }); renderStages(); } }, '+ 添加阶段'));
+  stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => {
+    Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
+      tpl.forEach((t) => { if (!stages.find((s) => (s.name || '') === t.name)) stages.push({ id: uid(), name: t.name, done: false, date: '' }); });
+      renderStages();
+    });
+  } }, '从模板载入'));
+  stageBox.appendChild(stageBtns);
+  f.appendChild(stageBox);
+
   const save = h('button', { class: 'btn primary', onclick: () => {
     p.name = name.value.trim();
     p.clientName = clientName.value.trim();
     p.phone = phone.value.trim();
     p.address = address.value.trim();
+    p.houseType = houseType.value.trim();
+    p.buildArea = Number(buildArea.value) || 0;
+    p.constructArea = Number(constructArea.value) || 0;
+    p.manager = manager.value.trim();
+    p.designer = designer.value.trim();
     p.contractAmount = Number(contract.value) || 0;
     p.costBudget = contract.value !== '' && budget.value !== '' ? Number(budget.value) || 0 : (budget.value !== '' ? Number(budget.value) || 0 : 0);
     p.startDate = startD.value;
     p.endDate = endD.value;
     p.note = f.querySelector('textarea').value.trim();
+    p.stages = stages;
     Projects.save(p).then(() => { closeModal(); toast(isEdit ? '已更新' : '已新建'); render(); });
   } }, isEdit ? '保存修改' : '创建项目');
   const cancel = h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消');
