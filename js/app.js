@@ -116,6 +116,44 @@ async function getCatTree() {
   }
   return tree;
 }
+
+// 分类统一：旧「预算计划类别库」(meta.planCategories, 字符串数组) 并入统一分类树 meta.catTree。
+// 匹配规则：名称已存在（一级名或二级名）→ 原地保留；否则追加为「其他」下的二级分类。
+// 迁移完成后删除 planCategories key（数据已全部并入树，不丢失）；幂等，key 不存在时跳过。
+async function migrateCats() {
+  let lib = null;
+  try { lib = await Meta.get('planCategories', null); } catch (e) { /* ignore */ }
+  if (!lib) return;
+  if (!Array.isArray(lib) || !lib.length) { await Meta.del('planCategories'); return; }
+  const tree = await getCatTree();
+  const have = new Set();
+  tree.forEach((c) => { have.add(c.name); (c.subs || []).forEach((s) => have.add(s.name)); });
+  let other = tree.find((c) => c.name === '其他');
+  if (!other) { other = { id: uid(), name: '其他', subs: [] }; tree.push(other); }
+  let added = 0;
+  lib.map((x) => (x || '').trim()).filter(Boolean).forEach((name) => {
+    if (have.has(name)) return;
+    (other.subs = other.subs || []).push({ id: uid(), name });
+    have.add(name); added++;
+  });
+  await Meta.set('catTree', tree);
+  await Meta.del('planCategories');
+  if (added) toast('已把原「预算计划类别库」的 ' + added + ' 个类别并入统一分类（「其他」下）');
+}
+
+// 统一分类树扁平化（预算计划类别下拉数据源）：
+// value = 节点名（与 planItems.cat 的名称语义兼容，旧数据无缝）；label 显示「一级＞二级」路径便于区分重名
+async function getPlanCatOptions() {
+  const tree = await getCatTree();
+  const seen = new Set(); const out = [];
+  tree.forEach((c) => {
+    if (c.name && !seen.has(c.name)) { seen.add(c.name); out.push({ value: c.name, label: c.name }); }
+    (c.subs || []).forEach((s) => {
+      if (s.name && !seen.has(s.name)) { seen.add(s.name); out.push({ value: s.name, label: c.name + '＞' + s.name }); }
+    });
+  });
+  return out;
+}
 async function getTemplates() {
   return (await Meta.get('txTemplates', [])) || [];
 }
@@ -971,7 +1009,7 @@ async function projectDetailView(id) {
   // 预算内计划付款（控支预警，详情页可内联编辑金额）
   const planCard = h('div', { class: 'card' });
   let planItems = (p.planItems && p.planItems.length) ? p.planItems.map((x) => ({ id: x.id || uid(), cat: x.cat || '', amount: Number(x.amount) || 0 })) : [];
-  const planLib = await Meta.get('planCategories', []);
+  const planLib = await getPlanCatOptions();
   const allTx = await Transactions.byProject(id);
   const spentOf = (itId) => allTx.filter((t) => t.type === 'expense' && t.planCat === itId).reduce((s, t) => s + (Number(t.amount) || 0), 0);
   let planEditMode = false;
@@ -982,7 +1020,7 @@ async function projectDetailView(id) {
       locked ? null : h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑')
     ]));
     if (!planItems.length) {
-      planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别。请到「项目编辑」中从设置类别库下拉选择添加'));
+      planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别。请到「项目编辑」中从统一分类下拉选择添加'));
     } else {
       planItems.forEach((it) => {
         const spent = spentOf(it.id);
@@ -995,8 +1033,8 @@ async function projectDetailView(id) {
         if (planEditMode) {
           const sel = h('select', { style: 'flex:1;min-width:0' });
           const opts = planLib.slice();
-          if (it.cat && !opts.includes(it.cat)) opts.push(it.cat);
-          opts.forEach((c) => sel.appendChild(h('option', { value: c }, c)));
+          if (it.cat && !opts.some((o) => o.value === it.cat)) opts.push({ value: it.cat, label: it.cat });
+          opts.forEach((o) => sel.appendChild(h('option', { value: o.value }, o.label)));
           sel.value = it.cat || '';
           sel.addEventListener('change', () => { it.cat = sel.value; });
           const inp = h('input', { type: 'number', inputmode: 'decimal', value: it.amount || '', placeholder: '计划金额', style: 'width:96px' });
@@ -1443,35 +1481,6 @@ async function settingsView() {
   } }, '保存模板'));
   wrap.appendChild(planTplCard);
 
-  // 预算计划类别库（全局，各项目编辑中下拉选择）
-  const catLibCard = h('div', { class: 'card' });
-  catLibCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '预算计划类别库（在此统一维护，各项目编辑时下拉选择）'));
-  const catList = h('div', { style: 'margin-top:8px' });
-  catLibCard.appendChild(catList);
-  Meta.get('planCategories', []).then((lib) => {
-    function renderLib() {
-      catList.innerHTML = '';
-      if (!lib.length) catList.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有类别，点下方「+ 添加类别」'));
-      lib.forEach((c, i) => {
-        const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
-        const up = h('button', { class: 'btn sm ghost', title: '上移', onclick: () => { if (i > 0) { const tmp = lib[i]; lib[i] = lib[i - 1]; lib[i - 1] = tmp; renderLib(); } } }, '↑');
-        const down = h('button', { class: 'btn sm ghost', title: '下移', onclick: () => { if (i < lib.length - 1) { const tmp = lib[i]; lib[i] = lib[i + 1]; lib[i + 1] = tmp; renderLib(); } } }, '↓');
-        const nm = h('input', { value: c, style: 'flex:1;min-width:0' });
-        nm.addEventListener('input', () => { lib[i] = nm.value; });
-        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { lib.splice(i, 1); renderLib(); } }, '×');
-        row.appendChild(up); row.appendChild(down); row.appendChild(nm); row.appendChild(del);
-        catList.appendChild(row);
-      });
-    }
-    renderLib();
-    catLibCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { lib.push(''); renderLib(); } }, '+ 添加类别'));
-    catLibCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
-      const cleaned = lib.map((x) => (x || '').trim()).filter((x) => x);
-      Meta.set('planCategories', cleaned).then(() => toast('已保存类别库'));
-    } }, '保存类别库'));
-  });
-  wrap.appendChild(catLibCard);
-
   // 账户管理
   const accCard = h('div', { class: 'card' });
   accCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '账户（记账时选择；转账可在两账户间划转）'));
@@ -1501,9 +1510,9 @@ async function settingsView() {
   });
   wrap.appendChild(accCard);
 
-  // 分类层级（一级 ＞ 二级）
+  // 分类层级（一级 ＞ 二级）——统一分类：记账分类与预算计划类别共用同一棵树
   const treeCard = h('div', { class: 'card' });
-  treeCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '分类层级（记账时显示为「一级 ＞ 二级」）'));
+  treeCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '分类层级（统一分类：记账选「一级 ＞ 二级」，项目预算计划类别也从这里选）'));
   const treeList = h('div', { style: 'margin-top:8px' });
   treeCard.appendChild(treeList);
   getCatTree().then((tree) => {
@@ -1755,25 +1764,19 @@ function projectForm(existing) {
   stageBox.appendChild(stageBtns);
   f.appendChild(stageBox);
 
-  // 预算内计划付款类别（类别来自「设置-预算计划类别库」，本项目下拉选择并填金额）
+  // 预算内计划付款类别（统一分类树：类别与「设置-分类层级」同一数据，下拉按「一级＞二级」展示）
   const planItems = (p.planItems && p.planItems.length)
     ? p.planItems.map((x) => ({ id: x.id || uid(), cat: x.cat || '', amount: Number(x.amount) || 0 }))
     : [];
   let planLib = [];
-  const planBox = h('div', { class: 'field' }, [h('label', {}, '预算内计划付款类别（类别从设置中维护）')]);
+  const planBox = h('div', { class: 'field' }, [h('label', {}, '预算内计划付款类别（统一分类，设置-分类层级中维护）')]);
   const planList = h('div', { style: 'margin-top:6px' });
   planBox.appendChild(planList);
   const fileInp = h('input', { type: 'file', accept: '.csv,text/csv', style: 'display:none' });
   fileInp.addEventListener('change', (e) => {
     const fl = e.target.files[0];
     if (!fl) return;
-    importPlanCsv(fl, planItems).then((n) => {
-      Meta.get('planCategories', []).then((lib) => {
-        const set = new Set(lib);
-        planItems.forEach((it) => { if (it.cat) set.add(it.cat); });
-        Meta.set('planCategories', Array.from(set)).then(() => { planLib = Array.from(set); toast('已导入 ' + n + ' 条计划'); renderPlan(); });
-      });
-    }).catch(() => toast('导入失败，请检查表格格式'));
+    importPlanCsv(fl, planItems).then((n) => { toast('已导入 ' + n + ' 条计划'); renderPlan(); }).catch(() => toast('导入失败，请检查表格格式'));
   });
   f.appendChild(fileInp);
   const planTools = h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px' }, [
@@ -1793,18 +1796,18 @@ function projectForm(existing) {
       planList.appendChild(row);
     });
     const used = planItems.map((x) => x.cat);
-    const avail = (planLib || []).filter((c) => !used.includes(c));
+    const avail = (planLib || []).filter((o) => !used.includes(o.value));
     if (avail.length) {
       const sel = h('select', { style: 'flex:1;min-width:0' });
-      avail.forEach((c) => sel.appendChild(h('option', { value: c }, c)));
+      avail.forEach((o) => sel.appendChild(h('option', { value: o.value }, o.label)));
       const addBtn = h('button', { class: 'btn sm primary', onclick: () => { if (sel.value) { planItems.push({ id: uid(), cat: sel.value, amount: 0 }); renderPlan(); } } }, '添加');
       planList.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' }, [sel, addBtn]));
     } else if (!planItems.length) {
-      planList.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '设置中还没有计划类别，请先到「设置 → 预算计划类别库」添加'));
+      planList.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '还没有可用分类，请先到「设置 → 分类层级」添加'));
     }
   }
   renderPlan();
-  Meta.get('planCategories', []).then((lib) => { planLib = lib; renderPlan(); });
+  getPlanCatOptions().then((opts) => { planLib = opts; renderPlan(); });
   f.appendChild(planBox);
 
   const save = h('button', { class: 'btn primary', onclick: () => {
@@ -2526,6 +2529,8 @@ function init() {
   window.addEventListener('hashchange', render);
   if (!location.hash) location.hash = '#/home';
   Meta.get('hideMoney', false).then((v) => { state.hideMoney = !!v; render(); }, () => render());
+  // 分类统一：启动时把旧「预算计划类别库」并入统一分类树（幂等；恢复旧备份刷新后同样生效）
+  migrateCats().then(() => render()).catch(() => {});
   // P2：启动即注册 SW；首次检查 + 每分钟/回到前台时检查到期节点与超支
   ensureSW();
   listenNotifyNav();

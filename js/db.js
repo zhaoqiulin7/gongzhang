@@ -187,7 +187,6 @@ function seedDemo() {
 
   memPut('meta', { key: 'remindDays', value: 3 });
   memPut('meta', { key: 'stageTemplate', value: [ { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' }, { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' } ] });
-  memPut('meta', { key: 'planCategories', value: ['泥瓦人工', '瓷砖主材', '木工人工', '水电材料', '水电人工', '油漆人工', '垃圾清运', '其他'] });
   memPut('meta', { key: 'accounts', value: [
     { id: 'acc-1', name: '现金', opening: 0, note: '' },
     { id: 'acc-2', name: '微信', opening: 0, note: '' },
@@ -195,11 +194,11 @@ function seedDemo() {
     { id: 'acc-4', name: '银行转账', opening: 0, note: '公司对公账户' }
   ] });
   memPut('meta', { key: 'catTree', value: [
-    { id: 'c1', name: '材料费', subs: [ { id: 'c1-1', name: '辅材' }, { id: 'c1-2', name: '主材' }, { id: 'c1-3', name: '五金' }, { id: 'c1-4', name: '水电材料' } ] },
-    { id: 'c2', name: '人工费', subs: [ { id: 'c2-1', name: '水电工' }, { id: 'c2-2', name: '泥工' }, { id: 'c2-3', name: '木工' }, { id: 'c2-4', name: '油漆工' }, { id: 'c2-5', name: '安装工' } ] },
+    { id: 'c1', name: '材料费', subs: [ { id: 'c1-1', name: '辅材' }, { id: 'c1-2', name: '主材' }, { id: 'c1-3', name: '五金' }, { id: 'c1-4', name: '水电材料' }, { id: 'c1-5', name: '瓷砖主材' } ] },
+    { id: 'c2', name: '人工费', subs: [ { id: 'c2-1', name: '水电工' }, { id: 'c2-2', name: '泥工' }, { id: 'c2-3', name: '木工' }, { id: 'c2-4', name: '油漆工' }, { id: 'c2-5', name: '安装工' }, { id: 'c2-6', name: '水电人工' }, { id: 'c2-7', name: '泥瓦人工' }, { id: 'c2-8', name: '木工人工' }, { id: 'c2-9', name: '油漆人工' } ] },
     { id: 'c3', name: '分包费', subs: [ { id: 'c3-1', name: '整包' }, { id: 'c3-2', name: '零包' } ] },
     { id: 'c4', name: '管理费', subs: [ { id: 'c4-1', name: '设计费' }, { id: 'c4-2', name: '管理人员' }, { id: 'c4-3', name: '其他' } ] },
-    { id: 'c5', name: '其他', subs: [ { id: 'c5-1', name: '其他' } ] }
+    { id: 'c5', name: '其他', subs: [ { id: 'c5-1', name: '其他' }, { id: 'c5-2', name: '垃圾清运' } ] }
   ] });
   memPut('meta', { key: 'txTemplates', value: [
     { id: 'tp1', name: '瓷砖主材', type: 'expense', amount: 0, category: '材料费', note: '' },
@@ -252,7 +251,8 @@ const Reminders = {
 };
 const Meta = {
   get: (key, def) => get('meta', key).then((v) => (v ? v.value : def)),
-  set: (key, value) => put('meta', { key, value })
+  set: (key, value) => put('meta', { key, value }),
+  del: (key) => del('meta', key)
 };
 
 function openDB() { return initBackend(); }
