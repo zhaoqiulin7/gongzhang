@@ -409,32 +409,51 @@ async function ledgerView() {
 
   // 维度筛选：分类（两级）/ 账户 / 项目
   const dimCard = h('div', { class: 'card' });
-  dimCard.appendChild(h('div', { class: 'dim-row' }, [
+  const dimDefaults = () => state.ledgerCat === 'all' && state.ledgerSub === 'all' && state.ledgerAccount === 'all' && state.ledgerProject === 'all' && !state.ledgerQ.trim();
+  const headRow = h('div', { class: 'dim-row' }, [
     h('span', { class: 'dim-k' }, '分类'),
     h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerCat = e.target.value; state.ledgerSub = 'all'; render(); } },
       [h('option', { value: 'all' }, '全部分类')].concat(catTree.map((c) => h('option', { value: c.name }, c.name))))
-  ]));
+  ]);
+  headRow.children[1].value = state.ledgerCat; // 回填当前筛选值，避免重渲染后显示重置
+  dimCard.appendChild(headRow);
   if (state.ledgerCat !== 'all') {
     const c = catTree.find((x) => x.name === state.ledgerCat);
     const subs = (c && c.subs) || [];
     if (subs.length) {
-      dimCard.appendChild(h('div', { class: 'dim-row' }, [
+      const subRow = h('div', { class: 'dim-row' }, [
         h('span', { class: 'dim-k' }, '二级'),
         h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerSub = e.target.value; render(); } },
           [h('option', { value: 'all' }, '全部二级')].concat(subs.map((s) => h('option', { value: s.name }, s.name))))
-      ]));
+      ]);
+      subRow.children[1].value = state.ledgerSub;
+      dimCard.appendChild(subRow);
     }
   }
-  dimCard.appendChild(h('div', { class: 'dim-row' }, [
+  const accRow = h('div', { class: 'dim-row' }, [
     h('span', { class: 'dim-k' }, '账户'),
     h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerAccount = e.target.value; render(); } },
       [h('option', { value: 'all' }, '全部账户')].concat(accounts.map((a) => h('option', { value: a.name }, a.name))))
-  ]));
-  dimCard.appendChild(h('div', { class: 'dim-row' }, [
+  ]);
+  accRow.children[1].value = state.ledgerAccount;
+  dimCard.appendChild(accRow);
+  const projRow = h('div', { class: 'dim-row' }, [
     h('span', { class: 'dim-k' }, '项目'),
     h('select', { class: 'ctl', style: 'flex:1;min-width:0', onchange: (e) => { state.ledgerProject = e.target.value; render(); } },
       [h('option', { value: 'all' }, '全部项目')].concat(projects.map((p) => h('option', { value: p.id }, p.name))))
-  ]));
+  ]);
+  projRow.children[1].value = state.ledgerProject;
+  dimCard.appendChild(projRow);
+  // 一键重置筛选
+  if (!dimDefaults()) {
+    dimCard.appendChild(h('div', { class: 'dim-row' }, [
+      h('span', { class: 'dim-k' }, ''),
+      h('button', { class: 'btn sm ghost', style: 'flex:1', onclick: () => {
+        state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all';
+        state.ledgerProject = 'all'; state.ledgerQ = ''; render();
+      } }, '重置筛选（当前已隐藏部分流水）')
+    ]));
+  }
   // 搜索
   const qInp = h('input', { class: 'ctl', style: 'flex:1;min-width:0', placeholder: '搜索备注/单位/项目/分类', value: state.ledgerQ });
   qInp.addEventListener('input', (e) => {
@@ -453,7 +472,12 @@ async function ledgerView() {
 
   // ---- 年 → 月 分组列表 ----
   if (!list.length) {
-    wrap.appendChild(emptyState('该条件下没有流水', '换个时间范围或清除筛选'));
+    const es = emptyState('该条件下没有流水', '当前筛选/时间范围内没有匹配的记录');
+    es.appendChild(h('button', { class: 'btn ghost', style: 'margin-top:12px', onclick: () => {
+      state.ledgerRange = 'all'; state.ledgerCat = 'all'; state.ledgerSub = 'all';
+      state.ledgerAccount = 'all'; state.ledgerProject = 'all'; state.ledgerQ = ''; render();
+    } }, '清除全部筛选并显示所有时间'));
+    wrap.appendChild(es);
   } else {
     const byYear = {};
     list.forEach((t) => {
