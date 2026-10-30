@@ -326,7 +326,7 @@ async function projectDetailView(id) {
     planCard.innerHTML = '';
     planCard.appendChild(h('div', { class: 'row-between' }, [
       h('div', { style: 'font-weight:700' }, '预算内计划付款（控支预警）'),
-      h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑金额')
+      h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑')
     ]));
     if (!planItems.length) {
       planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别，点项目「编辑」添加，或用「从表格导入」批量填入'));
@@ -339,13 +339,15 @@ async function projectDetailView(id) {
         const over = spent > plan;
         const row = h('div', { style: 'margin-top:10px' });
         const top = h('div', { class: 'row-between' });
-        top.appendChild(h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'));
         if (planEditMode) {
-          const inp = h('input', { type: 'number', inputmode: 'decimal', value: it.amount || '', placeholder: '计划金额', style: 'width:110px' });
+          const nm = h('input', { value: it.cat || '', placeholder: '类别名称（如：泥瓦人工）', style: 'flex:1;min-width:0' });
+          nm.addEventListener('input', () => { it.cat = nm.value; });
+          const inp = h('input', { type: 'number', inputmode: 'decimal', value: it.amount || '', placeholder: '计划金额', style: 'width:96px' });
           inp.addEventListener('input', () => { it.amount = Number(inp.value) || 0; });
           const del = h('button', { class: 'delete-x', onclick: () => { planItems = planItems.filter((x) => x.id !== it.id); renderPlanCard(); } }, '×');
-          top.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, [inp, del]));
+          top.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, [nm, inp, del]));
         } else {
+          top.appendChild(h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'));
           top.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + fmtMoney(plan) + ' · 已用 ' + fmtMoney(spent) + (over ? ' · 超支 ' + fmtMoney(spent - plan) : (left >= 0 ? ' · 余 ' + fmtMoney(left) : ''))));
         }
         row.appendChild(top);
@@ -355,7 +357,7 @@ async function projectDetailView(id) {
       if (planEditMode) {
         planCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' }, [
           h('button', { class: 'btn sm ghost', onclick: () => { planItems.push({ id: uid(), cat: '', amount: 0 }); renderPlanCard(); } }, '+ 添加类别'),
-          h('button', { class: 'btn primary', onclick: () => { p.planItems = planItems; Projects.save(p).then(() => { toast('已保存计划金额'); planEditMode = false; renderPlanCard(); }); } }, '保存计划')
+          h('button', { class: 'btn primary', onclick: () => { p.planItems = planItems; Projects.save(p).then(() => { toast('已保存计划类别'); planEditMode = false; renderPlanCard(); }); } }, '保存计划')
         ]));
       }
     }
@@ -519,8 +521,10 @@ async function settingsView() {
         const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
         const nm = h('input', { value: t.name || '', style: 'flex:1;min-width:0' });
         nm.addEventListener('input', () => { tpl[i].name = nm.value; });
-        const del = h('button', { class: 'delete-x', onclick: () => { tpl.splice(i, 1); renderTpl(); } }, '×');
-        row.appendChild(nm); row.appendChild(del);
+        const up = h('button', { class: 'btn sm ghost', title: '上移', onclick: () => { if (i > 0) { const tmp = tpl[i]; tpl[i] = tpl[i - 1]; tpl[i - 1] = tmp; renderTpl(); } } }, '↑');
+        const down = h('button', { class: 'btn sm ghost', title: '下移', onclick: () => { if (i < tpl.length - 1) { const tmp = tpl[i]; tpl[i] = tpl[i + 1]; tpl[i + 1] = tmp; renderTpl(); } } }, '↓');
+        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { tpl.splice(i, 1); renderTpl(); } }, '×');
+        row.appendChild(up); row.appendChild(down); row.appendChild(nm); row.appendChild(del);
         tplList.appendChild(row);
       });
     }
