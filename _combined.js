@@ -1619,7 +1619,7 @@ function partyStatement(p, allTxs, allProjects) {
 async function settingsView() {
   setPageTitle('设置');
   const remindDays = await Meta.get('remindDays', 3);
-  const notifyOn = await Meta.get('notifyEnabled', true);
+  let notifyOn = await Meta.get('notifyEnabled', true);
   const alertPct = await Meta.get('budgetAlertPct', 80);
   const wrap = h('div');
   wrap.appendChild(h('h2', { class: 'section' }, '提醒与预警'));
