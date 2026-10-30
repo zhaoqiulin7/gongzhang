@@ -1649,12 +1649,18 @@ async function projectDetailView(id) {
   }
   wrap.appendChild(stageCard);
 
-  // 利润卡
+  // 利润与回款看板（v2.1.0：新增毛利率、回款率）
   const st = await projStats(id);
+  const contract = Number(p.contractAmount) || 0;
+  const margin = st.income > 0 ? (st.profit / st.income * 100) : 0;
+  const recvRate = contract > 0 ? Math.min(100, Math.round(st.income / contract * 100)) : 0;
+  const due = contract - st.income; // 应收余额（合同额未收部分）
   const profitCard = h('div', { class: 'stat-grid' }, [
     stat('收入', M(st.income), 'income'),
     stat('支出', M(st.expense), 'expense'),
     stat('利润', M(st.profit), 'profit'),
+    stat('毛利率', st.income > 0 ? margin.toFixed(1) + '%' : '—', margin < 0 ? 'expense' : ''),
+    stat('回款率', contract > 0 ? recvRate + '%' : '—', contract > 0 && recvRate < 100 ? 'expense' : ''),
     stat('笔数', String(st.count), '')
   ]);
   wrap.appendChild(profitCard);
@@ -1674,6 +1680,51 @@ async function projectDetailView(id) {
       ]),
       h('div', { class: 'bar', style: 'margin-top:6px' }, [h('div', { class: 'bar-fill' + (level === 'over' ? ' over' : ''), style: 'width:' + pct + '%' })])
     ]));
+  }
+
+  // v2.1.0：回款与应收账龄（以竣工日作为应收基准日）
+  if (contract > 0) {
+    const endD = fmtDate(p.endDate);
+    const todayStr = fmtDate(new Date().toISOString());
+    const arCard = h('div', { class: 'card' });
+    arCard.appendChild(h('div', { class: 'row-between' }, [
+      h('span', { style: 'font-weight:700' }, '回款与应收'),
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '合同额 ' + M(contract))
+    ]));
+    arCard.appendChild(h('div', { class: 'row-between', style: 'margin-top:8px' }, [
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '已收 ' + M(st.income) + ' · 回款率 ' + recvRate + '%'),
+      h('span', { style: 'font-size:var(--g-fs-md);font-weight:700;color:' + (due > 0 ? 'var(--expense)' : 'var(--income)') },
+        due > 0 ? '应收 ' + M(due) : '已收齐 ✓')
+    ]));
+    arCard.appendChild(h('div', { class: 'bar', style: 'margin-top:6px' },
+      h('div', { class: 'bar-fill', style: 'width:' + recvRate + '%' })));
+
+    if (due > 0) {
+      let ageTxt, ageTagCls = 'reconciled';
+      if (!endD) {
+        ageTxt = '未设竣工日，暂不计龄';
+      } else if (todayStr <= endD) {
+        const left = Math.round((new Date(endD) - new Date(todayStr)) / 86400000);
+        ageTxt = '未到期 · 应收日 ' + endD + (left > 0 ? '（还有 ' + left + ' 天）' : '（今日到期）');
+        ageTagCls = 'paid';
+      } else {
+        const days = Math.round((new Date(todayStr) - new Date(endD)) / 86400000);
+        const bucket = days <= 30 ? '逾期 1-30 天' : days <= 60 ? '逾期 31-60 天' : days <= 90 ? '逾期 61-90 天' : '逾期 90 天以上';
+        ageTxt = bucket + ' · 应收日 ' + endD + '（已过 ' + days + ' 天）';
+        ageTagCls = days > 90 ? 'unpaid' : 'ongoing';
+      }
+      arCard.appendChild(h('div', { class: 'row-between', style: 'margin-top:10px' }, [
+        h('span', { class: 'tag ' + ageTagCls }, ageTxt.split(' · ')[0]),
+        h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm);text-align:right' }, ageTxt.split(' · ').slice(1).join(' · ') || '')
+      ]));
+      if (!locked) {
+        arCard.appendChild(h('button', {
+          class: 'btn sm ghost', style: 'margin-top:10px;width:100%',
+          onclick: () => reminderForm(id, null, { title: '催收 ' + (p.name || '项目') + ' 应收款 ' + M(due), amount: due, kind: 'receive', dueDate: endD || today() })
+        }, '⏰ 加一条催收提醒（' + M(due) + '）'));
+      }
+    }
+    wrap.appendChild(arCard);
   }
 
   // 预算内计划付款（控支预警，详情页可内联编辑金额）
@@ -2178,6 +2229,42 @@ async function statsView() {
       ]));
     });
     wrap.appendChild(card);
+  }
+
+  // v2.1.0：项目经营汇总（期间收/支/毛利 + 毛利率 + 累计回款率）
+  wrap.appendChild(h('h2', { class: 'section' }, '项目经营汇总'));
+  const perf = projects.map((pj) => {
+    const its = inRange.filter((t) => t.projectId === pj.id);
+    let inc = 0, exp = 0;
+    its.forEach((t) => { const a = Number(t.amount) || 0; if (isIncome(t)) inc += a; else if (isExpense(t)) exp += a; });
+    // 回款率用「累计收款 / 合同额」——合同额不属于时间范围，用全量口径才准确
+    let totalInc = 0;
+    txs.forEach((t) => { if (t.projectId === pj.id && isIncome(t)) totalInc += Number(t.amount) || 0; });
+    const c = Number(pj.contractAmount) || 0;
+    // 笔数剔除转账：转账不产生经营收支，与毛利率口径保持一致
+    return { p: pj, inc, exp, profit: inc - exp, count: its.filter((t) => !isTransfer(t)).length, rate: c > 0 ? Math.min(100, Math.round(totalInc / c * 100)) : 0, contract: c };
+  }).filter((x) => x.count > 0).sort((a, b) => b.inc - a.inc);
+  if (!perf.length) {
+    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该时间范围内没有项目收支'));
+  } else {
+    const pcard = h('div', { class: 'card' });
+    perf.slice(0, 20).forEach((x) => {
+      const mg = x.inc > 0 ? (x.profit / x.inc * 100) : 0;
+      pcard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + x.p.id; } }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, x.p.name || '未命名'),
+          h('div', { class: 'meta' }, x.count + ' 笔 · 毛利率 ' + (x.inc > 0 ? mg.toFixed(1) + '%' : '—') + (x.contract > 0 ? ' · 累计回款率 ' + x.rate + '%' : ''))
+        ]),
+        h('div', { class: 'tr-r' }, [
+          h('div', { class: 'amt income' }, '+' + M(x.inc)),
+          h('div', { class: 'amt expense' }, '-' + M(x.exp)),
+          h('div', { class: 'meta' }, '毛利 ' + M(x.profit))
+        ]),
+        h('span', { class: 'chev' }, '›')
+      ]));
+    });
+    if (perf.length > 20) pcard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '仅显示前 20 个项目'));
+    wrap.appendChild(pcard);
   }
 
   // 未开票收款清单（P3）：范围内 invoiceStatus ≠ 已开 的收入
@@ -3517,9 +3604,10 @@ function partyForm(existing) {
 }
 
 // ---------- 表单：收付款节点 ----------
-function reminderForm(projectId, existing) {
+// v2.1.0：preset 可预填 { title, kind, amount, dueDate }（回款看板「加催收提醒」用）
+function reminderForm(projectId, existing, preset) {
   const isEdit = !!existing;
-  const r = existing ? Object.assign({}, existing) : { id: uid(), projectId, kind: 'receive', done: false };
+  const r = existing ? Object.assign({}, existing) : Object.assign({ id: uid(), projectId, kind: 'receive', done: false }, preset || {});
   const f = h('div');
   const seg = h('div', { class: 'seg' });
   const bR = h('button', { class: r.kind === 'receive' ? 'on' : '', onclick: () => { r.kind = 'receive'; bR.classList.add('on'); bP.classList.remove('on'); } }, '收款');
