@@ -14,6 +14,10 @@ const js = db + '\n/* ===== util ===== */\n' + util + '\n/* ===== app ===== */\n
 
 const err = "window.addEventListener('error',function(e){var v=document.getElementById('view');if(v)v.innerHTML='<div class=\"empty\"><div class=\"big\">⚠️</div><div>出错了：'+((e&&e.message)||e)+'</div></div>';});window.addEventListener('unhandledrejection',function(e){var v=document.getElementById('view');if(v)v.innerHTML='<div class=\"empty\"><div class=\"big\">⚠️</div><div>出错了：'+((e&&e.reason&&e.reason.message)||(e&&e.reason)||e)+'</div></div>';});";
 
+// P2：注册 Service Worker（通知能力的基础；受限预览/file 协议下静默失败）
+const swreg = "if('serviceWorker' in navigator){window.addEventListener('load',function(){try{navigator.serviceWorker.register('./sw.js').catch(function(){});}catch(e){}});}";
+const swTag = '<script>' + swreg + '</script>\n';
+
 const html =
 '<!DOCTYPE html>\n' +
 '<html lang="zh-CN">\n' +
@@ -44,6 +48,7 @@ const html =
 '<div id="toast" class="toast"></div>\n' +
 '<div id="modal-root"></div>\n' +
 '<script>\n' + err + '\n' + js + '\n</script>\n' +
+swTag +
 '</body>\n' +
 '</html>\n';
 

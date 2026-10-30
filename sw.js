@@ -1,4 +1,4 @@
-const CACHE = 'decor-accounting-v12';
+const CACHE = 'decor-accounting-v13';
 const ASSETS = [
   './',
   './index.html',
@@ -37,6 +37,25 @@ self.addEventListener('fetch', function (e) {
       return caches.match(e.request).then(function (cached) {
         return cached || caches.match('./index.html');
       });
+    })
+  );
+});
+
+// P2：点击通知 → 聚焦已打开的 App 并跳到对应项目；没有打开的窗口则新开一个
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  const pid = (e.notification.data && e.notification.data.pid) || '';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (c.url.indexOf('index.html') >= 0 || c.url === new URL('./', self.location).href) {
+          c.focus();
+          if (pid && c.postMessage) c.postMessage({ type: 'notify-nav', pid: pid });
+          return;
+        }
+      }
+      return self.clients.openWindow('./index.html' + (pid ? '#/project/' + pid : ''));
     })
   );
 });

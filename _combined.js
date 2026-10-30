@@ -740,6 +740,34 @@ async function homeView() {
     wrap.appendChild(dueCard);
   }
 
+  // P2：预算预警（总成本预算 + 各计划类别，超支红/接近黄）
+  try {
+    const warns = await budgetWarnings();
+    if (warns.length) {
+      warns.sort((a, b) => (b.level === 'over' ? 1 : 0) - (a.level === 'over' ? 1 : 0) || b.ratio - a.ratio);
+      wrap.appendChild(h('h2', { class: 'section' }, '⚠️ 预算预警（' + warns.length + '）'));
+      const wCard = h('div', { class: 'card' });
+      warns.slice(0, 10).forEach((w) => {
+        const pct = Math.min(100, Math.round(w.ratio * 100));
+        const row = h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
+          h('div', { style: 'flex:1;min-width:0' }, [
+            h('div', { style: 'font-weight:600;font-size:14px' }, [
+              h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '超支' : '接近'),
+              document.createTextNode(w.p.name)
+            ]),
+            h('div', { class: 'meta' }, w.msg),
+            h('div', { class: 'bar', style: 'margin-top:5px' }, [h('div', { class: 'bar-fill' + (w.level === 'over' ? ' over' : ''), style: 'width:' + pct + '%' })])
+          ]),
+          h('div', { style: 'font-weight:700;font-size:13px;color:' + (w.level === 'over' ? 'var(--danger)' : 'var(--accent)') }, pct + '%'),
+          h('span', { class: 'chev' }, '›')
+        ]);
+        wCard.appendChild(row);
+      });
+      if (warns.length > 10) wCard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;padding:8px 0 2px' }, '还有 ' + (warns.length - 10) + ' 条预警，进项目详情查看'));
+      wrap.appendChild(wCard);
+    }
+  } catch (e) { /* 预警计算失败不影响首页 */ }
+
   // 项目进度看板：排序 + 按施工阶段筛选
   wrap.appendChild(h('h2', { class: 'section' }, '项目进度看板'));
 
@@ -1292,6 +1320,23 @@ async function projectDetailView(id) {
   ]);
   wrap.appendChild(profitCard);
 
+  // P2：成本预算使用进度（超支红/接近黄）
+  const budget = Number(p.costBudget) || 0;
+  if (budget > 0) {
+    const ratio = st.expense / budget;
+    const pct = Math.min(100, Math.round(ratio * 100));
+    const level = ratio >= 1 ? 'over' : (ratio >= (Number(await Meta.get('budgetAlertPct', 80)) || 80) / 100 ? 'near' : '');
+    wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px' }, [
+      h('div', { class: 'row-between' }, [
+        h('span', { class: 'muted', style: 'font-size:12px' },
+          '成本预算 ' + M(budget) + ' · 已用 ' + M(st.expense) + (ratio >= 1 ? ' · 超支 ' + M(st.expense - budget) : '')),
+        h('span', { style: 'font-size:12px;font-weight:700;color:' + (level === 'over' ? 'var(--danger)' : level === 'near' ? 'var(--accent)' : 'var(--muted)') },
+          pct + '%' + (level === 'over' ? ' ⚠️' : ''))
+      ]),
+      h('div', { class: 'bar', style: 'margin-top:6px' }, [h('div', { class: 'bar-fill' + (level === 'over' ? ' over' : ''), style: 'width:' + pct + '%' })])
+    ]));
+  }
+
   // 预算内计划付款（控支预警，详情页可内联编辑金额）
   const planCard = h('div', { class: 'card' });
   let planItems = (p.planItems && p.planItems.length) ? p.planItems.map((x) => ({ id: x.id || uid(), cat: x.cat || '', amount: Number(x.amount) || 0 })) : [];
@@ -1345,14 +1390,14 @@ async function projectDetailView(id) {
   renderPlanCard();
   wrap.appendChild(planCard);
 
-  // 收付款节点（提醒数据，P2 才弹通知）
+  // 收付款节点（到期自动弹系统通知，设置页可开启/关闭）
   const rems = await Reminders.byProject(id);
   const remCard = h('div', { class: 'card' });
   remCard.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'font-weight:700' }, '收付款节点'),
     locked ? null : h('button', { class: 'btn sm primary', onclick: () => reminderForm(id) }, '+ 节点')
   ]));
-  if (!rems.length) remCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '暂无节点（提醒通知将在 P2 上线）'));
+  if (!rems.length) remCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '暂无节点。添加后会在约定日前自动提醒（可在「设置」开启系统通知）'));
   else rems.forEach((r) => {
     remCard.appendChild(h('div', { class: 'tx' }, [
       h('div', {}, [
@@ -1574,14 +1619,60 @@ function partyStatement(p, allTxs, allProjects) {
 async function settingsView() {
   setPageTitle('设置');
   const remindDays = await Meta.get('remindDays', 3);
+  const notifyOn = await Meta.get('notifyEnabled', true);
+  const alertPct = await Meta.get('budgetAlertPct', 80);
   const wrap = h('div');
-  wrap.appendChild(h('h2', { class: 'section' }, '提醒设置'));
+  wrap.appendChild(h('h2', { class: 'section' }, '提醒与预警'));
   const rCard = h('div', { class: 'card' });
-  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '收付款节点提前提醒天数（通知功能 P2 上线）'));
+
+  // 系统通知权限
+  const permRow = h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' });
+  const permInfo = h('span', { class: 'muted', style: 'font-size:13px;flex:1;min-width:0' }, '');
+  function renderPerm() {
+    if (typeof Notification === 'undefined') { permInfo.textContent = '此环境不支持系统通知（节点提醒仍会在首页列出）'; return; }
+    if (Notification.permission === 'granted') permInfo.textContent = '✅ 系统通知已开启';
+    else if (Notification.permission === 'denied') permInfo.textContent = '🚫 通知已被拒绝，请在浏览器/系统设置中允许本 App 通知';
+    else permInfo.textContent = '系统通知未开启（开启后收付款到期、超支会弹通知）';
+  }
+  renderPerm();
+  permRow.appendChild(permInfo);
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    permRow.appendChild(h('button', { class: 'btn primary', onclick: () => {
+      Notification.requestPermission().then(() => { renderPerm(); if (Notification.permission === 'granted') toast('通知已开启，到期将自动提醒'); });
+    } }, '开启通知'));
+  }
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    permRow.appendChild(h('button', { class: 'btn ghost', onclick: () => {
+      showNotif('🔔 测试通知', '通知通道正常，收付款到期与超支预警会在这里提醒', 'test', '').then((ok) => { toast(ok ? '已发送测试通知' : '发送失败'); });
+    } }, '发送测试通知'));
+  }
+  rCard.appendChild(permRow);
+
+  // 通知开关
+  const swWrap = h('div', { class: 'field', style: 'margin-top:12px' }, [h('label', {}, '节点到期通知')]);
+  const swSeg = h('div', { class: 'seg' });
+  const bOn = h('button', { class: notifyOn ? 'on' : '', onclick: () => { notifyOn = true; bOn.classList.add('on'); bOff.classList.remove('on'); } }, '开启');
+  const bOff = h('button', { class: !notifyOn ? 'on' : '', onclick: () => { notifyOn = false; bOff.classList.add('on'); bOn.classList.remove('on'); } }, '关闭');
+  swSeg.appendChild(bOn); swSeg.appendChild(bOff);
+  swWrap.appendChild(swSeg);
+  rCard.appendChild(swWrap);
+
+  // 提前提醒天数
+  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:12px' }, '收付款节点提前提醒天数（到期前 N 天内每次打开 App 都会提醒，每天每节点一次）'));
   const input = h('input', { type: 'number', min: '0', max: '30', value: String(remindDays) });
   rCard.appendChild(h('div', { class: 'field', style: 'margin:10px 0 0' }, [input]));
+
+  // 预算预警阈值
+  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:12px' }, '预算预警阈值：支出达到成本预算的百分之多少时预警（超支 100% 必然预警）'));
+  const pctInp = h('input', { type: 'number', min: '1', max: '100', value: String(alertPct) });
+  rCard.appendChild(h('div', { class: 'field', style: 'margin:10px 0 0' }, [pctInp]));
+
   rCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:12px', onclick: () => {
-    Meta.set('remindDays', Number(input.value) || 0).then(() => toast('已保存'));
+    Promise.all([
+      Meta.set('remindDays', Number(input.value) || 0),
+      Meta.set('notifyEnabled', !!notifyOn),
+      Meta.set('budgetAlertPct', Math.min(100, Math.max(1, Number(pctInp.value) || 80)))
+    ]).then(() => toast('已保存提醒与预警设置'));
   } }, '保存'));
   wrap.appendChild(rCard);
 
@@ -2212,7 +2303,8 @@ async function txForm(presetType, presetProject, existingTx, preset) {
     } else if (keepAttachId) {
       t.attachmentId = keepAttachId;
     }
-    Transactions.save(t).then(() => {
+    Transactions.save(t).then(async () => {
+      await budgetAlertAfterSave(t); // P2：支出即时预算预警（超支/接近阈值）
       if (isEdit || srcTx) { closeModal(); toast(isEdit ? '已更新' : '已记录'); render(); return; }
       // 新建：连续记账模式——弹窗不关，清空金额/备注/照片继续记
       savedCount++; savedSum += amt;
@@ -2414,6 +2506,178 @@ function importPlanCsv(file, target) {
   });
 }
 
+// ---------- P2：本地通知 + 超支预警引擎 ----------
+let _swReg = null; // undefined=未探测, false=不可用, Promise=注册中
+function ensureSW() {
+  if (_swReg !== null) return Promise.resolve(_swReg === false ? null : _swReg);
+  if (typeof navigator === 'undefined' || !navigator.serviceWorker || !/^https?:/.test(location.protocol)) {
+    _swReg = false;
+    return Promise.resolve(null);
+  }
+  _swReg = navigator.serviceWorker.register('./sw.js').then((reg) => reg).catch(() => false);
+  return _swReg.then((reg) => (reg === false ? null : reg));
+}
+
+// 通知去重日志（每设备/每节点/每天最多提醒一次）
+function notifLog() {
+  try { return JSON.parse(localStorage.getItem('notifyLog') || '{}') || {}; } catch (e) { return {}; }
+}
+function notifMark(key) {
+  try {
+    const m = notifLog(); m[key] = today();
+    // 只保留 60 天，防止无限膨胀
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 60);
+    Object.keys(m).forEach((k) => { if (m[k] < cutoff.toISOString().slice(0, 10)) delete m[k]; });
+    localStorage.setItem('notifyLog', JSON.stringify(m));
+  } catch (e) { /* 隐私模式等场景忽略 */ }
+}
+
+// 弹系统通知：优先走 Service Worker（App 在后台也能弹），无 SW 时退回页面内 Notification
+async function showNotif(title, body, tag, pid) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  const reg = await ensureSW();
+  try {
+    if (reg) {
+      await reg.showNotification(title, {
+        body: body, tag: tag || 'decor', icon: './icon.svg', badge: './icon.svg',
+        data: { pid: pid || '' }
+      });
+    } else {
+      const n = new Notification(title, { body: body, tag: tag || 'decor', icon: './icon.svg' });
+      n.onclick = () => { try { window.focus(); } catch (e) {} if (pid) location.hash = '#/project/' + pid; };
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
+function addDaysStr(d, n) {
+  const x = new Date(d + 'T00:00:00');
+  x.setDate(x.getDate() + n);
+  return x.getFullYear() + '-' + pad2(x.getMonth() + 1) + '-' + pad2(x.getDate());
+}
+function daysDiff(a, b) { return Math.round((new Date(a + 'T00:00:00') - new Date(b + 'T00:00:00')) / 864e5); }
+
+// 收付款节点提醒：检查 未完成 && 约定日 <= 今天+提前天数，逐条弹通知（每天每节点一次）
+async function notifyDueReminders() {
+  try {
+    const enabled = await Meta.get('notifyEnabled', true);
+    if (!enabled) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const [rems, projects] = await Promise.all([Reminders.all(), Projects.all()]);
+    const remindDays = Number(await Meta.get('remindDays', 3)) || 0;
+    const td = today();
+    const limit = addDaysStr(td, remindDays);
+    const due = rems
+      .filter((r) => !r.done && r.dueDate && r.dueDate <= limit)
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+    let shown = 0;
+    for (const r of due) {
+      const key = r.id + '|' + r.dueDate;
+      if (notifLog()[key] === td) continue;
+      if (shown >= 5) break; // 一次最多弹 5 条，防止轰炸
+      const p = projects.find((x) => x.id === r.projectId);
+      const d = daysDiff(r.dueDate, td);
+      const when = d < 0 ? '已逾期 ' + (-d) + ' 天' : (d === 0 ? '今天到期' : d + ' 天后到期');
+      const head = d < 0 ? '⏰ 逾期' + (r.kind === 'receive' ? '收款' : '付款') : (r.kind === 'receive' ? '💰 收款提醒' : '💸 付款提醒');
+      const body = (p ? p.name : '未关联项目') + ' · ' + (r.title || '收付款节点') + ' · ' + when + (r.amount ? ' · ' + fmtMoney(r.amount) : '');
+      const ok = await showNotif(head, body, 'rem-' + r.id, r.projectId);
+      if (ok) { notifMark(key); shown++; }
+    }
+  } catch (e) { /* 后台检查失败不打扰用户 */ }
+}
+
+// 预算预警计算：总成本预算 + 各计划类别，返回 [{p, level, kind, cat, msg, ratio}]
+async function budgetWarnings() {
+  const [projects, txs] = await Promise.all([Projects.all(), Transactions.all()]);
+  const pct = (Number(await Meta.get('budgetAlertPct', 80)) || 80) / 100;
+  const out = [];
+  projects.filter((p) => p.status !== 'settled').forEach((p) => {
+    const pt = txs.filter((t) => t.projectId === p.id);
+    let spent = 0;
+    pt.forEach((t) => { if (isExpense(t)) spent += Number(t.amount) || 0; });
+    const budget = Number(p.costBudget) || 0;
+    if (budget > 0) {
+      const ratio = spent / budget;
+      if (ratio >= 1) out.push({ p, level: 'over', kind: 'total', cat: '', msg: '总支出 ' + M(spent) + ' 已超成本预算 ' + M(budget), ratio });
+      else if (ratio >= pct) out.push({ p, level: 'near', kind: 'total', cat: '', msg: '总支出已达成本预算 ' + Math.round(ratio * 100) + '%（' + M(spent) + '/' + M(budget) + '）', ratio });
+    }
+    (p.planItems || []).forEach((it) => {
+      const plan = Number(it.amount) || 0;
+      if (plan <= 0) return;
+      const s = pt.filter((t) => t.type === 'expense' && t.planCat === it.id).reduce((a, t) => a + (Number(t.amount) || 0), 0);
+      const ratio = s / plan;
+      if (ratio >= 1) out.push({ p, level: 'over', kind: 'plan', cat: it.cat || '未命名', msg: '计划类别「' + (it.cat || '未命名') + '」已超支 ' + M(s - plan), ratio });
+      else if (ratio >= pct) out.push({ p, level: 'near', kind: 'plan', cat: it.cat || '未命名', msg: '计划类别「' + (it.cat || '未命名') + '」已用 ' + Math.round(ratio * 100) + '%', ratio });
+    });
+  });
+  return out;
+}
+
+// 通知超支预警（每天每项目每级别最多一次）
+async function notifyBudgetWarnings() {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const warns = await budgetWarnings();
+    const overs = warns.filter((w) => w.level === 'over');
+    if (!overs.length) return;
+    const td = today();
+    let shown = 0;
+    for (const w of overs) {
+      const key = 'budget|' + w.p.id + '|' + w.kind + '|' + (w.cat || '') + '|' + td;
+      if (notifLog()[key] === td) continue;
+      const ok = await showNotif('⚠️ 预算超支预警', w.p.name + ' · ' + w.msg, 'budget-' + w.p.id + '-' + w.kind + '-' + (w.cat || ''), w.p.id);
+      if (ok) { notifMark(key); shown++; }
+      if (shown >= 3) break;
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// 记支出后即时预警（toast 必弹 + 系统通知每日一次）
+async function budgetAlertAfterSave(t) {
+  try {
+    if (!t || t.type !== 'expense') return;
+    const p = await Projects.get(t.projectId);
+    if (!p) return;
+    const txs = await Transactions.byProject(t.projectId);
+    const spent = txs.filter((x) => isExpense(x)).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+    const budget = Number(p.costBudget) || 0;
+    const msgs = [];
+    if (budget > 0) {
+      if (spent > budget) msgs.push('总支出 ' + M(spent) + ' 已超成本预算 ' + M(budget) + '（超 ' + M(spent - budget) + '）');
+      else if (spent >= budget * 0.8) msgs.push('总支出已达成本预算 ' + Math.round((spent / budget) * 100) + '%');
+    }
+    if (t.planCat) {
+      const it = (p.planItems || []).find((x) => x.id === t.planCat);
+      if (it) {
+        const plan = Number(it.amount) || 0;
+        const s = txs.filter((x) => x.type === 'expense' && x.planCat === t.planCat).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+        if (plan > 0 && s > plan) msgs.push('计划类别「' + (it.cat || '未命名') + '」已超支 ' + M(s - plan));
+      }
+    }
+    msgs.forEach((m) => toast('⚠️ ' + m));
+    if (msgs.length) {
+      const td = today();
+      for (const m of msgs) {
+        const lv = m.indexOf('已超') >= 0 ? 'over' : 'near';
+        const key = 'save|' + p.id + '|' + lv + '|' + td;
+        if (notifLog()[key] === td) continue;
+        const ok = await showNotif('⚠️ 预算预警', p.name + ' · ' + m, 'save-' + p.id + '-' + lv, p.id);
+        if (ok) notifMark(key);
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// SW 通知点击 → 聚焦 App 并跳到对应项目
+function listenNotifyNav() {
+  if (typeof navigator === 'undefined' || !navigator.serviceWorker) return;
+  try {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'notify-nav' && e.data.pid) location.hash = '#/project/' + e.data.pid;
+    });
+  } catch (e) { /* ignore */ }
+}
+
 // ---------- 初始化 ----------
 function init() {
   document.querySelectorAll('.tab').forEach((t) => {
@@ -2422,6 +2686,14 @@ function init() {
   window.addEventListener('hashchange', render);
   if (!location.hash) location.hash = '#/home';
   Meta.get('hideMoney', false).then((v) => { state.hideMoney = !!v; render(); }, () => render());
+  // P2：启动即注册 SW；首次检查 + 每分钟/回到前台时检查到期节点与超支
+  ensureSW();
+  listenNotifyNav();
+  setTimeout(() => { notifyDueReminders(); notifyBudgetWarnings(); }, 3000);
+  setInterval(() => { if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); } }, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); }
+  });
 }
 
 init();
