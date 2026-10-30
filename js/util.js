@@ -4,12 +4,21 @@ export const EXPENSE_CATS = ['材料费', '人工费', '分包费', '管理费',
 export const PAY_METHODS = ['现金', '微信', '支付宝', '银行转账'];
 export const REGIONS = ['客厅', '卧室', '厨房', '卫生间', '阳台', '全屋', '其他'];
 export const TRADES = ['水电', '泥瓦', '木工', '油漆', '安装', '其他'];
+// 往来单位类型：客户属于「外部」，供应商/工人/施工经理/设计师属于「内部」
 export const PARTY_TYPES = [
-  { v: 'client', label: '客户' },
-  { v: 'supplier', label: '供应商' },
-  { v: 'worker', label: '工人' },
-  { v: 'other', label: '其他' }
+  { v: 'client', label: '客户', scope: 'external' },
+  { v: 'supplier', label: '供应商', scope: 'internal' },
+  { v: 'worker', label: '工人', scope: 'internal' },
+  { v: 'manager', label: '施工经理', scope: 'internal' },
+  { v: 'designer', label: '设计师', scope: 'internal' },
+  { v: 'other', label: '其他', scope: 'internal' }
 ];
+export function partyScopeOf(type) {
+  return (PARTY_TYPES.find((x) => x.v === type) || {}).scope || 'internal';
+}
+export function partyTypeLabel(type) {
+  return (PARTY_TYPES.find((x) => x.v === type) || {}).label || '其他';
+}
 export const STATUS_MAP = {
   ongoing: { label: '进行中', cls: 'ongoing' },
   finished: { label: '已完工', cls: 'finished' },

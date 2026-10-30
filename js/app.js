@@ -1,10 +1,11 @@
 import { Projects, Transactions, Parties, Attachments, Reminders, Meta, uid } from './db.js';
 import {
   INCOME_TYPES, EXPENSE_CATS, PAY_METHODS, REGIONS, TRADES, PARTY_TYPES, STATUS_MAP,
-  fmtMoney, fmtDate, today, escapeHtml, h, toast, openModal, closeModal, confirmDialog, setPageTitle
+  fmtMoney, fmtDate, today, escapeHtml, h, toast, openModal, closeModal, confirmDialog, setPageTitle,
+  partyScopeOf, partyTypeLabel
 } from './util.js';
 
-const state = { projectId: null, homeSort: 'start', homeStage: 'all', partiesSort: 'type' };
+const state = { projectId: null, homeSort: 'start', homeStage: 'all', partiesSort: 'type', partyScope: 'all' };
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
 const DEFAULT_STAGES = [
@@ -280,28 +281,31 @@ async function projectDetailView(id) {
   info.appendChild(editBtns);
   wrap.appendChild(info);
 
-  // 施工阶段进度
+  // 施工阶段进度（可勾选完成 + 自主修改各阶段完成时间）
   const stageCard = h('div', { class: 'card' });
   const stages = p.stages || [];
   const doneN = stages.filter((s) => s.done).length;
   stageCard.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'font-weight:700' }, '施工阶段（' + doneN + '/' + stages.length + '）'),
-    h('button', { class: 'btn sm primary', onclick: () => projectForm(p) }, '编辑阶段')
+    h('button', { class: 'btn sm ghost', onclick: () => projectForm(p) }, '添加/改名')
   ]));
   if (!stages.length) {
-    stageCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置阶段，点「编辑阶段」或项目「编辑」添加'));
+    stageCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置阶段，点「添加/改名」或项目「编辑」添加'));
   } else {
     stages.forEach((s) => {
-      stageCard.appendChild(h('div', { class: 'tx' }, [
-        h('div', {}, [
-          h('div', {}, s.name || '未命名阶段'),
-          h('div', { class: 'meta' }, (s.date ? fmtDate(s.date) : '未排期') + (s.done ? ' · 已完成' : ''))
-        ]),
-        h('div', { style: 'display:flex;gap:6px' }, [
-          h('button', { class: 'btn sm ghost', onclick: () => { s.done = !s.done; if (s.done && !s.date) s.date = today(); Projects.save(p).then(render); } }, s.done ? '↺' : '✓'),
-          h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×')
-        ])
-      ]));
+      const row = h('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:8px' });
+      const cb = h('input', { type: 'checkbox', style: 'width:18px;height:18px;flex:0 0 auto' });
+      cb.checked = !!s.done;
+      cb.addEventListener('change', () => { s.done = cb.checked; if (s.done && !s.date) s.date = today(); Projects.save(p).then(render); });
+      const nameWrap = h('div', { style: 'flex:1;min-width:0' }, [
+        h('div', { style: 'font-weight:600;font-size:13px' }, s.name || '未命名阶段'),
+        h('div', { class: 'meta', style: s.done ? 'color:var(--income)' : '' }, s.done ? '已完成' : '未完成')
+      ]);
+      const dt = h('input', { type: 'date', value: s.date || '', style: 'width:130px;flex:0 0 auto' });
+      dt.addEventListener('change', () => { s.date = dt.value; Projects.save(p).then(() => toast('已记录完成时间')); });
+      const del = h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×');
+      row.appendChild(cb); row.appendChild(nameWrap); row.appendChild(dt); row.appendChild(del);
+      stageCard.appendChild(row);
     });
   }
   wrap.appendChild(stageCard);
@@ -419,8 +423,15 @@ async function partiesView() {
   setPageTitle('往来单位');
   const [parties, txs, projects] = await Promise.all([Parties.all(), Transactions.all(), Projects.all()]);
   const wrap = h('div');
-  wrap.appendChild(h('h2', { class: 'section' }, '客户 / 供应商 / 工人（' + parties.length + '）'));
+  wrap.appendChild(h('h2', { class: 'section' }, '客户（外部）/ 供应商·工人·施工经理·设计师（内部）'));
   wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-4px 0 8px' }, '点击任一往来单位可直接编辑；下方按对应项目列出收/付款明细'));
+
+  // 内/外部筛选
+  const scopeChips = h('div', { class: 'chips', style: 'margin-bottom:10px' });
+  [['all', '全部'], ['external', '外部·客户'], ['internal', '内部']].forEach(([v, label]) => {
+    scopeChips.appendChild(h('button', { class: 'chip' + (state.partyScope === v ? ' on' : ''), onclick: () => { state.partyScope = v; render(); } }, label));
+  });
+  wrap.appendChild(scopeChips);
 
   const sortSeg = h('div', { class: 'seg', style: 'margin-bottom:12px' });
   [['type', '类型'], ['amount', '按金额'], ['freq', '按常用']].forEach(([v, label]) => {
@@ -428,11 +439,12 @@ async function partiesView() {
   });
   wrap.appendChild(sortSeg);
 
-  const enriched = parties.map((p) => ({ p, st: partyStatsSync(txs, p.id) }));
+  let enriched = parties.map((p) => ({ p, st: partyStatsSync(txs, p.id) }));
+  if (state.partyScope !== 'all') enriched = enriched.filter(({ p }) => partyScopeOf(p.type) === state.partyScope);
   if (state.partiesSort === 'amount') enriched.sort((a, b) => b.st.total - a.st.total);
   else if (state.partiesSort === 'freq') enriched.sort((a, b) => b.st.count - a.st.count);
 
-  if (!enriched.length) wrap.appendChild(emptyState('还没有往来单位', '记账时可快速选用'));
+  if (!enriched.length) wrap.appendChild(emptyState('没有符合条件的往来单位', '记账时可快速选用'));
   else enriched.forEach(({ p, st }) => wrap.appendChild(partyCard(p, st, txs, projects)));
   return wrap;
 }
@@ -450,7 +462,9 @@ function partyStatsSync(txs, pid) {
 }
 
 function partyCard(p, st, allTxs, allProjects) {
-  const typeLabel = (PARTY_TYPES.find((x) => x.v === p.type) || {}).label || '其他';
+  const typeLabel = partyTypeLabel(p.type);
+  const scope = partyScopeOf(p.type);
+  const scopeLabel = scope === 'external' ? '外部' : '内部';
   const status = (PAY_STATUS[p.payStatus] || PAY_STATUS.unpaid);
   const pname = (id) => { const x = allProjects.find((p2) => p2.id === id); return x ? x.name : '未关联项目'; };
   // 按项目归并该往来单位的收/付款，确保与各个项目对应
@@ -469,7 +483,7 @@ function partyCard(p, st, allTxs, allProjects) {
     h('div', { style: 'font-weight:700;font-size:15px' }, p.name),
     h('span', { class: 'tag ' + (status.cls || 'unpaid') }, status.label || '未付')
   ]));
-  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, typeLabel + (p.phone ? ' · ' + p.phone : '')));
+  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, typeLabel + '（' + scopeLabel + '）' + (p.phone ? ' · ' + p.phone : '')));
   card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, '往来笔数：' + st.count + ' 笔 · 合计 ' + fmtMoney(st.total)));
 
   // 按项目对应的收/付款明细
@@ -773,7 +787,7 @@ async function txForm(presetType, presetProject) {
       let partyName = '', partyId = dyn._partySel.value;
       const newName = dyn._partyNew.value.trim();
       if (newName) {
-        const np = { id: uid(), name: newName, type: 'other', createdAt: Date.now() };
+        const np = { id: uid(), name: newName, type: 'supplier', createdAt: Date.now() };
         await Parties.save(np); partyId = np.id; partyName = newName;
       } else if (partyId) {
         const pp = parties.find((x) => x.id === partyId); partyName = pp ? pp.name : '';

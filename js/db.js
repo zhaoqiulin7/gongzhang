@@ -162,12 +162,16 @@ function seedDemo() {
   PA({ id: 'pa1', name: '佛山瓷砖批发·陈老板', type: 'supplier', phone: '', note: '主材供应商', payStatus: 'unpaid' });
   PA({ id: 'pa2', name: '木工·老张', type: 'worker', phone: '', note: '木工班组', payStatus: 'paid' });
   PA({ id: 'pa3', name: '王先生', type: 'client', phone: '138****0011', note: '保利香槟业主' });
+  PA({ id: 'pa4', name: '施工经理·老陈', type: 'manager', phone: '', note: '现场施工管理', payStatus: 'unpaid' });
+  PA({ id: 'pa5', name: '设计师·林工', type: 'designer', phone: '', note: '设计部', payStatus: 'reconciled' });
 
-  T({ id: 't1', projectId: 'p1', type: 'income', txType: '首付', amount: 40000, date: '2026-09-05', method: 'wechat', partyId: 'pa3', partyName: '王先生', note: '开工首付', invoiceState: 'opened', invoiceType: 'common', tax: 0 });
-  T({ id: 't2', projectId: 'p1', type: 'income', txType: '进度款', amount: 20000, date: '2026-10-08', method: 'transfer', partyId: 'pa3', partyName: '王先生', note: '水电完工进度款', invoiceState: 'unopened', invoiceType: '', tax: 0 });
+  T({ id: 't1', projectId: 'p1', type: 'income', subType: '首付款', amount: 40000, date: '2026-09-05', method: '微信', partyId: 'pa3', partyName: '王先生', note: '开工首付', invoiceStatus: '已开', invoiceType: '普票', tax: 0 });
+  T({ id: 't2', projectId: 'p1', type: 'income', subType: '进度款', amount: 20000, date: '2026-10-08', method: '银行转账', partyId: 'pa3', partyName: '王先生', note: '水电完工进度款', invoiceStatus: '未开', invoiceType: '', tax: 0 });
   T({ id: 't3', projectId: 'p1', type: 'expense', category: '材料费', amount: 12000, date: '2026-09-20', method: 'transfer', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', area: '厨卫', trade: '泥瓦', material: '瓷砖', note: '卫生间+厨房瓷砖' });
   T({ id: 't4', projectId: 'p1', type: 'expense', category: '人工费', amount: 8000, date: '2026-10-12', method: 'cash', partyId: 'pa2', partyName: '木工·老张', area: '全屋', trade: '木工', material: '', note: '全屋吊顶木工' });
   T({ id: 't5', projectId: 'p2', type: 'expense', category: '材料费', amount: 20000, date: '2026-10-15', method: 'transfer', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', area: '客厅', trade: '泥瓦', material: '地砖', note: '客厅地砖' });
+  T({ id: 't6', projectId: 'p1', type: 'expense', category: '管理费', amount: 3000, date: '2026-10-20', method: 'cash', partyId: 'pa4', partyName: '施工经理·老陈', area: '全屋', trade: '其他', material: '', note: '施工管理费' });
+  T({ id: 't7', projectId: 'p1', type: 'expense', category: '管理费', amount: 5000, date: '2026-10-22', method: 'transfer', partyId: 'pa5', partyName: '设计师·林工', area: '全屋', trade: '其他', material: '', note: '设计费' });
 
   R({ id: 'r1', projectId: 'p1', kind: 'receive', title: '尾款催收', amount: 20000, dueDate: '2026-11-25', note: '竣工验收后收尾款' });
   R({ id: 'r2', projectId: 'p1', kind: 'pay', title: '瓷砖尾款', amount: 5000, dueDate: '2026-11-02', note: '付陈老板瓷砖尾款' });
