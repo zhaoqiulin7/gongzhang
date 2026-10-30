@@ -5,13 +5,13 @@
 const DB_NAME = 'decor-accounting';
 const DB_VERSION = 1;
 
-// 各对象仓库定义（keyPath + 索引）
+// 各对象仓库定义（keyPath + 索引；索引为 {name, keyPath} 映射）
 const STORES = {
   projects: { keyPath: 'id', indexes: [] },
-  transactions: { keyPath: 'id', indexes: ['byProject', 'byDate'] },
+  transactions: { keyPath: 'id', indexes: [ { name: 'byProject', keyPath: 'projectId' }, { name: 'byDate', keyPath: 'date' } ] },
   parties: { keyPath: 'id', indexes: [] },
   attachments: { keyPath: 'id', indexes: [] },
-  reminders: { keyPath: 'id', indexes: ['byProject'] },
+  reminders: { keyPath: 'id', indexes: [ { name: 'byProject', keyPath: 'projectId' } ] },
   meta: { keyPath: 'key', indexes: [] }
 };
 
@@ -29,7 +29,7 @@ function makeMem() {
   const db = {};
   for (const name in STORES) {
     db[name] = { recs: new Map(), idx: {} };
-    STORES[name].indexes.forEach((ix) => { db[name].idx[ix] = new Map(); });
+    STORES[name].indexes.forEach((ix) => { db[name].idx[ix.name] = new Map(); });
   }
   return db;
 }
@@ -38,15 +38,15 @@ function memPut(store, value) {
   const kp = STORES[store].keyPath;
   const id = value[kp];
   STORES[store].indexes.forEach((ix) => {
-    const m = st.idx[ix];
+    const m = st.idx[ix.name];
     m.forEach((set, key) => { if (set.has(id)) { set.delete(id); if (set.size === 0) m.delete(key); } });
   });
   st.recs.set(id, value);
   STORES[store].indexes.forEach((ix) => {
-    const key = value[ix];
+    const key = value[ix.keyPath];
     if (key !== undefined && key !== null) {
-      if (!st.idx[ix].has(key)) st.idx[ix].set(key, new Set());
-      st.idx[ix].get(key).add(id);
+      if (!st.idx[ix.name].has(key)) st.idx[ix.name].set(key, new Set());
+      st.idx[ix.name].get(key).add(id);
     }
   });
   return value;
@@ -56,8 +56,8 @@ function memDel(store, id) {
   const rec = st.recs.get(id);
   if (!rec) return;
   STORES[store].indexes.forEach((ix) => {
-    const key = rec[ix];
-    const m = st.idx[ix];
+    const key = rec[ix.keyPath];
+    const m = st.idx[ix.name];
     if (m.has(key)) { m.get(key).delete(id); if (m.get(key).size === 0) m.delete(key); }
   });
   st.recs.delete(id);
@@ -115,7 +115,7 @@ function initBackend() {
         for (const name in STORES) {
           if (!db.objectStoreNames.contains(name)) {
             const s = db.createObjectStore(name, { keyPath: STORES[name].keyPath });
-            STORES[name].indexes.forEach((ix) => s.createIndex(ix, ix));
+            STORES[name].indexes.forEach((ix) => s.createIndex(ix.name, ix.keyPath));
           }
         }
       };

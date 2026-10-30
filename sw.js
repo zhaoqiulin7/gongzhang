@@ -1,4 +1,4 @@
-const CACHE = 'decor-accounting-v1';
+const CACHE = 'decor-accounting-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -24,14 +24,18 @@ self.addEventListener('activate', function (e) {
   self.clients.claim();
 });
 
+// 网络优先：始终拉取最新代码，避免真机上缓存旧版导致“修好的又变回旧 bug”；
+// 仅在离线且缓存存在时回退到缓存，保证可离线打开。
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then(function (cached) {
-      return cached || fetch(e.request).then(function (res) {
-        return res;
-      }).catch(function () {
-        return caches.match('./index.html');
+    fetch(e.request).then(function (res) {
+      const copy = res.clone();
+      caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+      return res;
+    }).catch(function () {
+      return caches.match(e.request).then(function (cached) {
+        return cached || caches.match('./index.html');
       });
     })
   );

@@ -121,6 +121,11 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 .stat .v { font-size: 19px; font-weight: 700; margin-top: 4px; }
 .v.income { color: var(--income); }
 .v.expense { color: var(--expense); }
+.stat.tappable { cursor: pointer; transition: border-color .15s, transform .08s; }
+.stat.tappable:active { transform: scale(.97); border-color: var(--primary-light); }
+.stat.tappable::after { content: ' ›'; color: var(--text-dim); font-weight: 700; }
+.party-clickable { cursor: pointer; transition: transform .08s ease, border-color .15s; }
+.party-clickable:active { transform: scale(.985); border-color: var(--primary-light); }
 .v.profit { color: var(--accent); }
 
 .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-dim); margin-left: 6px; }
@@ -202,13 +207,13 @@ window.addEventListener('error',function(e){var v=document.getElementById('view'
 const DB_NAME = 'decor-accounting';
 const DB_VERSION = 1;
 
-// 各对象仓库定义（keyPath + 索引）
+// 各对象仓库定义（keyPath + 索引；索引为 {name, keyPath} 映射）
 const STORES = {
   projects: { keyPath: 'id', indexes: [] },
-  transactions: { keyPath: 'id', indexes: ['byProject', 'byDate'] },
+  transactions: { keyPath: 'id', indexes: [ { name: 'byProject', keyPath: 'projectId' }, { name: 'byDate', keyPath: 'date' } ] },
   parties: { keyPath: 'id', indexes: [] },
   attachments: { keyPath: 'id', indexes: [] },
-  reminders: { keyPath: 'id', indexes: ['byProject'] },
+  reminders: { keyPath: 'id', indexes: [ { name: 'byProject', keyPath: 'projectId' } ] },
   meta: { keyPath: 'key', indexes: [] }
 };
 
@@ -226,7 +231,7 @@ function makeMem() {
   const db = {};
   for (const name in STORES) {
     db[name] = { recs: new Map(), idx: {} };
-    STORES[name].indexes.forEach((ix) => { db[name].idx[ix] = new Map(); });
+    STORES[name].indexes.forEach((ix) => { db[name].idx[ix.name] = new Map(); });
   }
   return db;
 }
@@ -235,15 +240,15 @@ function memPut(store, value) {
   const kp = STORES[store].keyPath;
   const id = value[kp];
   STORES[store].indexes.forEach((ix) => {
-    const m = st.idx[ix];
+    const m = st.idx[ix.name];
     m.forEach((set, key) => { if (set.has(id)) { set.delete(id); if (set.size === 0) m.delete(key); } });
   });
   st.recs.set(id, value);
   STORES[store].indexes.forEach((ix) => {
-    const key = value[ix];
+    const key = value[ix.keyPath];
     if (key !== undefined && key !== null) {
-      if (!st.idx[ix].has(key)) st.idx[ix].set(key, new Set());
-      st.idx[ix].get(key).add(id);
+      if (!st.idx[ix.name].has(key)) st.idx[ix.name].set(key, new Set());
+      st.idx[ix.name].get(key).add(id);
     }
   });
   return value;
@@ -253,8 +258,8 @@ function memDel(store, id) {
   const rec = st.recs.get(id);
   if (!rec) return;
   STORES[store].indexes.forEach((ix) => {
-    const key = rec[ix];
-    const m = st.idx[ix];
+    const key = rec[ix.keyPath];
+    const m = st.idx[ix.name];
     if (m.has(key)) { m.get(key).delete(id); if (m.get(key).size === 0) m.delete(key); }
   });
   st.recs.delete(id);
@@ -312,7 +317,7 @@ function initBackend() {
         for (const name in STORES) {
           if (!db.objectStoreNames.contains(name)) {
             const s = db.createObjectStore(name, { keyPath: STORES[name].keyPath });
-            STORES[name].indexes.forEach((ix) => s.createIndex(ix, ix));
+            STORES[name].indexes.forEach((ix) => s.createIndex(ix.name, ix.keyPath));
           }
         }
       };
@@ -648,9 +653,9 @@ async function homeView() {
     stat('总收入', fmtMoney(income), 'income'),
     stat('总支出', fmtMoney(expense), 'expense'),
     stat('总利润', fmtMoney(income - expense), 'profit'),
-    stat('项目数', String(projects.length), ''),
-    stat('待收', fmtMoney(recvDue), 'income'),
-    stat('待付', fmtMoney(payDue), 'expense')
+    stat('项目数', String(projects.length), '', () => { location.hash = '#/projects'; }),
+    stat('待收', fmtMoney(recvDue), 'income', () => drillDue('receive')),
+    stat('待付', fmtMoney(payDue), 'expense', () => drillDue('pay'))
   ]));
 
   // 项目进度看板：排序 + 按施工阶段筛选
@@ -703,8 +708,27 @@ async function homeView() {
   return wrap;
 }
 
-function stat(k, v, cls) {
-  return h('div', { class: 'stat' }, [
+// 总览下钻：点击「待收 / 待付」查看对应收付款节点明细
+async function drillDue(kind) {
+  const [rems, projects] = await Promise.all([Reminders.all(), Projects.all()]);
+  const list = rems.filter((r) => !r.done && r.kind === kind);
+  const pname = (id) => { const p = projects.find((x) => x.id === id); return p ? p.name : '未关联项目'; };
+  const body = h('div');
+  if (!list.length) body.appendChild(emptyState('暂无未完成的' + (kind === 'receive' ? '收款' : '付款') + '节点', '可在项目详情里添加收付款节点'));
+  else list.forEach((r) => {
+    body.appendChild(h('div', { class: 'tx' }, [
+      h('div', {}, [
+        h('div', {}, (kind === 'receive' ? '收款·' : '付款·') + (r.title || '未命名节点')),
+        h('div', { class: 'meta' }, pname(r.projectId) + (r.dueDate ? ' · 约定 ' + fmtDate(r.dueDate) : '') + (r.done ? ' · 已完成' : ''))
+      ]),
+      h('div', { style: 'font-weight:700', class: kind === 'receive' ? 'amt income' : 'amt expense' }, r.amount ? fmtMoney(r.amount) : '')
+    ]));
+  });
+  openModal(kind === 'receive' ? '待收明细（点击看板「待收」进入）' : '待付明细（点击看板「待付」进入）', body, [h('button', { class: 'btn ghost', onclick: () => closeModal() }, '关闭')]);
+}
+
+function stat(k, v, cls, onclick) {
+  return h('div', { class: 'stat' + (onclick ? ' tappable' : ''), ...(onclick ? { onclick } : {}) }, [
     h('div', { class: 'k' }, k),
     h('div', { class: 'v ' + cls }, v)
   ]);
@@ -835,32 +859,51 @@ async function projectDetailView(id) {
   ]);
   wrap.appendChild(profitCard);
 
-  // 预算内计划付款（控支预警）
+  // 预算内计划付款（控支预警，详情页可内联编辑金额）
   const planCard = h('div', { class: 'card' });
-  const pItems = p.planItems || [];
-  planCard.appendChild(h('div', { style: 'font-weight:700' }, '预算内计划付款（控支预警）'));
-  if (!pItems.length) {
-    planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别，点项目「编辑」添加，或用「从表格导入」批量填入'));
-  } else {
-    const allTx = await Transactions.byProject(id);
-    pItems.forEach((it) => {
-      const spent = allTx.filter((t) => t.type === 'expense' && t.planCat === it.id)
-        .reduce((s, t) => s + (Number(t.amount) || 0), 0);
-      const plan = Number(it.amount) || 0;
-      const left = plan - spent;
-      const pct = plan > 0 ? Math.min(100, Math.round((spent / plan) * 100)) : 0;
-      const over = spent > plan;
-      planCard.appendChild(h('div', { style: 'margin-top:10px' }, [
-        h('div', { class: 'row-between' }, [
-          h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'),
-          h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + fmtMoney(plan) + ' · 已用 ' + fmtMoney(spent) + (over ? ' · 超支 ' + fmtMoney(spent - plan) : (left >= 0 ? ' · 余 ' + fmtMoney(left) : '')))
-        ]),
-        h('div', { class: 'bar', style: 'margin-top:5px' }, [
-          h('div', { class: 'bar-fill' + (over ? ' over' : ''), style: 'width:' + pct + '%' })
-        ])
-      ]));
-    });
+  let planItems = (p.planItems && p.planItems.length) ? p.planItems.map((x) => ({ id: x.id || uid(), cat: x.cat || '', amount: Number(x.amount) || 0 })) : [];
+  const allTx = await Transactions.byProject(id);
+  const spentOf = (itId) => allTx.filter((t) => t.type === 'expense' && t.planCat === itId).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  let planEditMode = false;
+  function renderPlanCard() {
+    planCard.innerHTML = '';
+    planCard.appendChild(h('div', { class: 'row-between' }, [
+      h('div', { style: 'font-weight:700' }, '预算内计划付款（控支预警）'),
+      h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑金额')
+    ]));
+    if (!planItems.length) {
+      planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别，点项目「编辑」添加，或用「从表格导入」批量填入'));
+    } else {
+      planItems.forEach((it) => {
+        const spent = spentOf(it.id);
+        const plan = Number(it.amount) || 0;
+        const left = plan - spent;
+        const pct = plan > 0 ? Math.min(100, Math.round((spent / plan) * 100)) : 0;
+        const over = spent > plan;
+        const row = h('div', { style: 'margin-top:10px' });
+        const top = h('div', { class: 'row-between' });
+        top.appendChild(h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'));
+        if (planEditMode) {
+          const inp = h('input', { type: 'number', inputmode: 'decimal', value: it.amount || '', placeholder: '计划金额', style: 'width:110px' });
+          inp.addEventListener('input', () => { it.amount = Number(inp.value) || 0; });
+          const del = h('button', { class: 'delete-x', onclick: () => { planItems = planItems.filter((x) => x.id !== it.id); renderPlanCard(); } }, '×');
+          top.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, [inp, del]));
+        } else {
+          top.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + fmtMoney(plan) + ' · 已用 ' + fmtMoney(spent) + (over ? ' · 超支 ' + fmtMoney(spent - plan) : (left >= 0 ? ' · 余 ' + fmtMoney(left) : ''))));
+        }
+        row.appendChild(top);
+        if (!planEditMode) row.appendChild(h('div', { class: 'bar', style: 'margin-top:5px' }, [ h('div', { class: 'bar-fill' + (over ? ' over' : ''), style: 'width:' + pct + '%' }) ]));
+        planCard.appendChild(row);
+      });
+      if (planEditMode) {
+        planCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' }, [
+          h('button', { class: 'btn sm ghost', onclick: () => { planItems.push({ id: uid(), cat: '', amount: 0 }); renderPlanCard(); } }, '+ 添加类别'),
+          h('button', { class: 'btn primary', onclick: () => { p.planItems = planItems; Projects.save(p).then(() => { toast('已保存计划金额'); planEditMode = false; renderPlanCard(); }); } }, '保存计划')
+        ]));
+      }
+    }
   }
+  renderPlanCard();
   wrap.appendChild(planCard);
 
   // 收付款节点（提醒数据，P2 才弹通知）
@@ -915,9 +958,10 @@ async function projectDetailView(id) {
 // ---------- 往来单位 ----------
 async function partiesView() {
   setPageTitle('往来单位');
-  const [parties, txs] = await Promise.all([Parties.all(), Transactions.all()]);
+  const [parties, txs, projects] = await Promise.all([Parties.all(), Transactions.all(), Projects.all()]);
   const wrap = h('div');
   wrap.appendChild(h('h2', { class: 'section' }, '客户 / 供应商 / 工人（' + parties.length + '）'));
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:-4px 0 8px' }, '点击任一往来单位可直接编辑；下方按对应项目列出收/付款明细'));
 
   const sortSeg = h('div', { class: 'seg', style: 'margin-bottom:12px' });
   [['type', '类型'], ['amount', '按金额'], ['freq', '按常用']].forEach(([v, label]) => {
@@ -930,7 +974,7 @@ async function partiesView() {
   else if (state.partiesSort === 'freq') enriched.sort((a, b) => b.st.count - a.st.count);
 
   if (!enriched.length) wrap.appendChild(emptyState('还没有往来单位', '记账时可快速选用'));
-  else enriched.forEach(({ p, st }) => wrap.appendChild(partyCard(p, st)));
+  else enriched.forEach(({ p, st }) => wrap.appendChild(partyCard(p, st, txs, projects)));
   return wrap;
 }
 
@@ -946,29 +990,47 @@ function partyStatsSync(txs, pid) {
   return { count: rel.length, byCat, expenseTotal, incomeTotal, total: expenseTotal + incomeTotal };
 }
 
-function partyCard(p, st) {
+function partyCard(p, st, allTxs, allProjects) {
   const typeLabel = (PARTY_TYPES.find((x) => x.v === p.type) || {}).label || '其他';
   const status = (PAY_STATUS[p.payStatus] || PAY_STATUS.unpaid);
-  const card = h('div', { class: 'card' });
+  const pname = (id) => { const x = allProjects.find((p2) => p2.id === id); return x ? x.name : '未关联项目'; };
+  // 按项目归并该往来单位的收/付款，确保与各个项目对应
+  const byProj = {};
+  allTxs.filter((t) => t.partyId === p.id).forEach((t) => {
+    const pid = t.projectId;
+    if (!byProj[pid]) byProj[pid] = { name: pname(pid), income: 0, expense: 0, cats: {} };
+    const amt = Number(t.amount) || 0;
+    if (isIncome(t)) byProj[pid].income += amt;
+    else { byProj[pid].expense += amt; const c = t.category || '其他'; byProj[pid].cats[c] = (byProj[pid].cats[c] || 0) + amt; }
+  });
+  const projIds = Object.keys(byProj);
+
+  const card = h('div', { class: 'card party-clickable', onclick: () => partyForm(p) });
   card.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'font-weight:700;font-size:15px' }, p.name),
     h('span', { class: 'tag ' + (status.cls || 'unpaid') }, status.label || '未付')
   ]));
   card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, typeLabel + (p.phone ? ' · ' + p.phone : '')));
+  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, '往来笔数：' + st.count + ' 笔 · 合计 ' + fmtMoney(st.total)));
 
-  if (st.expenseTotal > 0) {
-    const parts = Object.keys(st.byCat).map((c) => c + ' ' + fmtMoney(st.byCat[c]));
-    card.appendChild(h('div', { class: 'sub', style: 'margin-top:6px' }, '已付（分类）：' + parts.join(' · ')));
-    card.appendChild(h('div', { class: 'sub' }, '已付合计：' + fmtMoney(st.expenseTotal)));
+  // 按项目对应的收/付款明细
+  if (projIds.length) {
+    card.appendChild(h('div', { class: 'sub', style: 'margin-top:8px;font-weight:600' }, '对应项目收付款明细'));
+    projIds.forEach((pid) => {
+      const d = byProj[pid];
+      const catParts = Object.keys(d.cats).map((c) => c + ' ' + fmtMoney(d.cats[c])).join(' · ');
+      const line = (d.income > 0 ? '收 ' + fmtMoney(d.income) : '') + (d.income > 0 && d.expense > 0 ? ' / ' : '') + (d.expense > 0 ? '付 ' + fmtMoney(d.expense) : '');
+      card.appendChild(h('div', { class: 'sub', style: 'margin-top:5px;padding-left:8px;border-left:2px solid var(--line)' }, [
+        h('div', { style: 'font-weight:600' }, d.name),
+        h('div', { class: 'muted', style: 'font-size:12px' }, line + (catParts ? '（' + catParts + '）' : ''))
+      ]));
+    });
   } else if (st.incomeTotal > 0) {
     card.appendChild(h('div', { class: 'sub', style: 'margin-top:6px' }, '已收合计：' + fmtMoney(st.incomeTotal)));
   }
 
-  card.appendChild(h('div', { class: 'sub', style: 'margin-top:4px' }, '往来笔数：' + st.count + ' 笔'));
-
-  card.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:10px' }, [
-    h('button', { class: 'btn sm ghost', onclick: () => partyForm(p) }, '编辑'),
-    h('button', { class: 'delete-x', onclick: () => confirmDialog('删除该往来单位？', () => { Parties.remove(p.id).then(render); }) }, '×')
+  card.appendChild(h('div', { style: 'display:flex;justify-content:flex-end;margin-top:10px' }, [
+    h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除该往来单位？', () => { Parties.remove(p.id).then(render); }); } }, '删除')
   ]));
   return card;
 }

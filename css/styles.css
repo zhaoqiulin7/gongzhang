@@ -109,6 +109,11 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 .stat .v { font-size: 19px; font-weight: 700; margin-top: 4px; }
 .v.income { color: var(--income); }
 .v.expense { color: var(--expense); }
+.stat.tappable { cursor: pointer; transition: border-color .15s, transform .08s; }
+.stat.tappable:active { transform: scale(.97); border-color: var(--primary-light); }
+.stat.tappable::after { content: ' ›'; color: var(--text-dim); font-weight: 700; }
+.party-clickable { cursor: pointer; transition: transform .08s ease, border-color .15s; }
+.party-clickable:active { transform: scale(.985); border-color: var(--primary-light); }
 .v.profit { color: var(--accent); }
 
 .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-dim); margin-left: 6px; }
