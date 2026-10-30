@@ -11,7 +11,8 @@ const state = {
   hideMoney: false,
   ledgerRange: 'month', ledgerCat: 'all', ledgerSub: 'all', ledgerAccount: 'all',
   ledgerProject: 'all', ledgerQ: '', ledgerSort: 'date',
-  ledgerBatch: false, ledgerSel: {}
+  ledgerBatch: false, ledgerSel: {},
+  statsRange: 'year', statsDim: 'project'
 };
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
@@ -256,6 +257,7 @@ async function render() {
   if (route === 'projects') node = await projectsView();
   else if (route === 'parties') node = await partiesView();
   else if (route === 'settings') node = await settingsView();
+  else if (route === 'stats') node = await statsView();
   else if (route === 'ledger') {
     if (parts[1] && rangeOf(parts[1]).key === parts[1]) state.ledgerRange = parts[1];
     node = await ledgerView();
@@ -320,7 +322,10 @@ async function homeView() {
   ]));
 
   // 按时间维度汇总（点击下钻到流水页）
-  wrap.appendChild(h('h2', { class: 'section' }, '按时间维度'));
+  wrap.appendChild(h('div', { class: 'row-between', style: 'margin:4px 0 12px' }, [
+    h('h2', { class: 'section', style: 'margin:0' }, '按时间维度'),
+    h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/stats'; } }, '统计报表 ›')
+  ]));
   const timeCard = h('div', { class: 'card' });
   timeRangeSummary(txs).forEach((it) => {
     timeCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/ledger/' + it.r.key; } }, [
@@ -1367,6 +1372,139 @@ async function viewBill(b, reopen) {
 }
 
 // ---------- 设置 ----------
+// ---------- 统计报表（P3）：时间范围 + 维度拆解 + 未开票收款清单 ----------
+async function statsView() {
+  setPageTitle('统计报表');
+  const [projects, txs] = await Promise.all([Projects.all(), Transactions.all()]);
+  const wrap = h('div');
+  const ranges = timeRanges();
+  const rg = ranges.find((r) => r.key === state.statsRange) || ranges[4]; // 默认本年
+  const pname = (id) => { const p = projects.find((x) => x.id === id); return p ? p.name : '未关联项目'; };
+
+  // 时间范围切换（与流水页同一套区间）
+  const pills = h('div', { class: 'pill-tabs' });
+  ranges.forEach((r) => pills.appendChild(h('button', { class: 'pill' + (r.key === rg.key ? ' on' : ''), onclick: () => { state.statsRange = r.key; render(); } }, r.label)));
+  wrap.appendChild(pills);
+
+  const inRange = txs.filter((t) => { const d = fmtDate(t.date); return d >= rg.from && d <= rg.to; });
+  let inc = 0, exp = 0;
+  inRange.forEach((t) => { if (isIncome(t)) inc += Number(t.amount) || 0; else if (isExpense(t)) exp += Number(t.amount) || 0; });
+
+  const sumCard = h('div', { class: 'card sum-card' });
+  sumCard.appendChild(h('div', { class: 'sum-label' }, rg.label + ' · ' + rg.sub + ' · ' + inRange.length + ' 笔'));
+  sumCard.appendChild(h('div', { class: 'sum-main' }, [h('span', { class: 'sum-k' }, '结余 '), h('span', { class: 'sum-v' }, M(inc - exp))]));
+  sumCard.appendChild(h('div', { class: 'sum-sub' }, '收入 ' + M(inc) + ' ｜ 支出 ' + M(exp)));
+  wrap.appendChild(sumCard);
+
+  // 维度拆解：按项目 / 支出分类 / 收入类型 / 按往来 / 按账户
+  wrap.appendChild(h('h2', { class: 'section' }, '维度拆解'));
+  const DIMS = [
+    { key: 'project', label: '按项目' }, { key: 'cat', label: '支出分类' },
+    { key: 'subType', label: '收入类型' }, { key: 'party', label: '按往来' },
+    { key: 'account', label: '按账户' }
+  ];
+  const dimPills = h('div', { class: 'pill-tabs' });
+  DIMS.forEach((d) => dimPills.appendChild(h('button', { class: 'pill' + (d.key === (state.statsDim || 'project') ? ' on' : ''), onclick: () => { state.statsDim = d.key; render(); } }, d.label)));
+  wrap.appendChild(dimPills);
+
+  const dim = state.statsDim || 'project';
+  const map = {};
+  inRange.forEach((t) => {
+    if (isTransfer(t)) return;
+    const amt = Number(t.amount) || 0;
+    let key = '', label = '';
+    if (dim === 'project') { key = t.projectId || 'none'; label = pname(t.projectId); }
+    else if (dim === 'cat') { if (!isExpense(t)) return; key = t.category || '未分类'; label = (t.category || '未分类') + (t.subCat ? '＞' + t.subCat : ''); }
+    else if (dim === 'subType') { if (!isIncome(t)) return; key = t.subType || '其他'; label = t.subType || '其他'; }
+    else if (dim === 'party') { if (!t.partyName) return; key = t.partyId || t.partyName; label = t.partyName; }
+    else if (dim === 'account') { if (!t.account) return; key = t.account; label = t.account; }
+    if (!key) return;
+    if (!map[key]) map[key] = { key: key, label: label, income: 0, expense: 0, count: 0 };
+    const b = map[key];
+    b.count++;
+    if (isIncome(t)) b.income += amt; else b.expense += amt;
+  });
+  const rows = Object.keys(map).map((k) => map[k])
+    .sort((a, b) => (b.income - b.expense) - (a.income - a.expense) || (b.income + b.expense) - (a.income + a.expense));
+  const maxSum = Math.max.apply(null, [1].concat(rows.map((r) => r.income + r.expense)));
+  const drillRange = () => (ranges.some((r) => r.key === state.statsRange) ? state.statsRange : 'all');
+
+  if (!rows.length) {
+    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该时间范围内没有可拆解的记录'));
+  } else {
+    const card = h('div', { class: 'card' });
+    rows.forEach((b) => {
+      let drill = null;
+      if (dim === 'project') {
+        drill = () => { const p = projects.find((x) => x.id === b.key); if (p) location.hash = '#/project/' + p.id; };
+      } else if (dim === 'cat') {
+        drill = () => {
+          state.ledgerRange = drillRange();
+          const cat = (b.label || '').split('＞')[0];
+          state.ledgerCat = cat === '未分类' ? 'all' : cat; state.ledgerSub = 'all';
+          location.hash = '#/ledger/' + state.ledgerRange;
+        };
+      } else if (dim === 'account') {
+        drill = () => {
+          state.ledgerRange = drillRange();
+          state.ledgerAccount = b.key; state.ledgerCat = 'all'; state.ledgerSub = 'all';
+          location.hash = '#/ledger/' + state.ledgerRange;
+        };
+      } else if (dim === 'party') {
+        drill = () => {
+          state.ledgerRange = drillRange();
+          state.ledgerQ = b.label; state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all';
+          location.hash = '#/ledger/' + state.ledgerRange;
+        };
+      }
+      const pct = Math.max(4, Math.round((b.income + b.expense) / maxSum * 100));
+      card.appendChild(h('div', Object.assign({ class: 'tr-row' }, drill ? { onclick: drill } : {}), [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, b.label),
+          h('div', { class: 'meta' }, b.count + ' 笔 · 占比 ' + Math.round((b.income + b.expense) / maxSum * 100) + '%'),
+          h('div', { class: 'bar' }, h('div', { class: 'bar-fill' + (b.income - b.expense < 0 ? ' over' : ''), style: 'width:' + pct + '%' }))
+        ]),
+        h('div', { class: 'tr-r' }, [
+          b.income ? h('div', { class: 'amt income' }, '+' + M(b.income)) : null,
+          b.expense ? h('div', { class: 'amt expense' }, '-' + M(b.expense)) : null,
+          (b.income && b.expense) ? h('div', { class: 'meta' }, '净 ' + M(b.income - b.expense)) : null
+        ]),
+        drill ? h('span', { class: 'chev' }, '›') : null
+      ]));
+    });
+    wrap.appendChild(card);
+  }
+
+  // 未开票收款清单（P3）：范围内 invoiceStatus ≠ 已开 的收入
+  const uninv = inRange.filter((t) => isIncome(t) && t.invoiceStatus !== '已开');
+  wrap.appendChild(h('h2', { class: 'section' }, '未开票收款（' + uninv.length + '）'));
+  if (!uninv.length) {
+    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该时间范围内收到的款项均已开票 🎉'));
+  } else {
+    let uninvSum = 0;
+    uninv.forEach((t) => { uninvSum += Number(t.amount) || 0; });
+    const ucard = h('div', { class: 'card' });
+    ucard.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:4px' }, [
+      h('span', { class: 'muted', style: 'font-size:13px' }, '合计 ' + uninv.length + ' 笔'),
+      h('span', { class: 'amt expense' }, M(uninvSum))
+    ]));
+    uninv.slice().sort((a, b) => fmtDate(b.date).localeCompare(fmtDate(a.date))).forEach((t) => {
+      ucard.appendChild(h('div', { class: 'tr-row', onclick: () => txForm(null, t.projectId || '', t) }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:14px' }, (t.subType || '收款') + ' · ' + pname(t.projectId)),
+          h('div', { class: 'meta' }, fmtDate(t.date) + (t.partyName ? ' · ' + t.partyName : '') + ' · 票:' + (t.invoiceStatus || '未开') + (t.invoiceType ? '/' + t.invoiceType : ''))
+        ]),
+        h('div', { class: 'tr-r' }, h('div', { class: 'amt income' }, '+' + M(t.amount))),
+        h('span', { class: 'chev' }, '✎')
+      ]));
+    });
+    ucard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' }, '点击一笔可进入编辑，把开票状态改为「已开」'));
+    wrap.appendChild(ucard);
+  }
+
+  return wrap;
+}
+
 async function settingsView() {
   setPageTitle('设置');
   const remindDays = await Meta.get('remindDays', 3);

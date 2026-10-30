@@ -1,19 +1,71 @@
+/* ============================================================
+   设计 Token（v1.7.0 起）—— 规范详见 DESIGN_TOKENS.md
+   三层结构与权限范围（组件样式只允许使用「语义层」和「组件层」）：
+     1) 基础层 --g-*：原始值（色板/字号/间距/圆角/阴影/层级），仅允许被语义层引用
+     2) 语义层：按用途命名（--bg/--surface/--income…，v1.6 沿用名即本层），组件样式的唯一颜色来源
+     3) 组件层 --c-<组件>-<属性>：组件私有（如 --c-tab-h），不出组件作用域使用
+   过期机制：废弃 Token 标注「@deprecated <原因> → 用 <替代名>」，保留 2 个 minor 版本后删除；
+   新代码禁止引用 @deprecated Token。
+   ============================================================ */
 :root {
-  --bg: #0f1411;
-  --surface: #18211c;
-  --surface-2: #1f2a23;
-  --primary: #1f6f54;
-  --primary-light: #2e916e;
-  --accent: #ffce54;
-  --text: #e8efe9;
-  --text-dim: #9bb0a4;
-  --danger: #e0654f;
-  --income: #4caf78;
-  --expense: #e0835a;
-  --border: #2a372f;
-  --radius: 14px;
-  --shadow: 0 6px 20px rgba(0,0,0,.35);
-  --tab-h: 58px;
+  /* —— 基础层：色板 --g-c-<色相>-<阶> —— */
+  --g-c-green-990: #0f1411;
+  --g-c-green-900: #18211c;
+  --g-c-green-850: #1f2a23;
+  --g-c-green-800: #2a372f;
+  --g-c-green-700: #15352a;
+  --g-c-green-650: #112820;
+  --g-c-green-600: #1f6f54;
+  --g-c-green-500: #2e916e;
+  --g-c-green-a18: rgba(46, 145, 110, .18);
+  --g-c-yellow: #ffce54;
+  --g-c-red: #e0654f;
+  --g-c-green-l: #4caf78;
+  --g-c-orange: #e0835a;
+  --g-c-blue: #6aa9ff;
+  --g-c-white: #e8efe9;
+  --g-c-gray: #9bb0a4;
+  --g-c-black-a35: rgba(0, 0, 0, .35);
+  --g-c-black-a60: rgba(0, 0, 0, .6);
+  --g-c-green-a55: rgba(31, 111, 84, .55);
+
+  /* —— 基础层：字号 --g-fs-* —— */
+  --g-fs-xs: 11px; --g-fs-sm: 12px; --g-fs-md: 13px; --g-fs-base: 15px;
+  --g-fs-lg: 17px; --g-fs-xl: 19px; --g-fs-2xl: 22px; --g-fs-3xl: 30px; --g-fs-amount: 34px;
+
+  /* —— 基础层：间距 --g-sp-*（4pt 阶梯，迁移按批次进行） —— */
+  --g-sp-1: 4px; --g-sp-2: 8px; --g-sp-3: 12px; --g-sp-4: 16px; --g-sp-5: 20px; --g-sp-6: 24px;
+
+  /* —— 基础层：圆角 --g-r-* —— */
+  --g-r-sm: 8px; --g-r-md: 10px; --g-r-lg: 14px; --g-r-xl: 18px; --g-r-pill: 20px;
+
+  /* —— 基础层：阴影 --g-sh-* —— */
+  --g-sh-card: 0 6px 20px var(--g-c-black-a35);
+  --g-sh-fab: 0 8px 22px var(--g-c-green-a55);
+
+  /* —— 基础层：层叠层级 --g-z-* —— */
+  --g-z-topbar: 20; --g-z-fab: 25; --g-z-tabbar: 30; --g-z-modal: 50; --g-z-float: 60;
+
+  /* —— 语义层（v1.6 沿用名，全部映射到基础层；组件样式只用这一层取色） —— */
+  --bg: var(--g-c-green-990);
+  --surface: var(--g-c-green-900);
+  --surface-2: var(--g-c-green-850);
+  --primary: var(--g-c-green-600);
+  --primary-light: var(--g-c-green-500);
+  --accent: var(--g-c-yellow);
+  --text: var(--g-c-white);
+  --text-dim: var(--g-c-gray);
+  --danger: var(--g-c-red);
+  --income: var(--g-c-green-l);
+  --expense: var(--g-c-orange);
+  --border: var(--g-c-green-800);
+  --radius: var(--g-r-lg);
+  --shadow: var(--g-sh-card);
+
+  /* —— 组件层 —— */
+  --c-tab-h: 58px;
+  /* @deprecated v1.7.0 旧名兼容别名 → 用 --c-tab-h；计划 v1.9 移除 */
+  --tab-h: var(--c-tab-h);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -26,14 +78,14 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 15px;
+  font-size: var(--g-fs-base);
   line-height: 1.5;
   overscroll-behavior-y: none;
 }
 #app { max-width: 480px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); }
 
 #topbar {
-  position: sticky; top: 0; z-index: 20;
+  position: sticky; top: 0; z-index: var(--g-z-topbar);
   background: linear-gradient(180deg, #15352a, #112820);
   border-bottom: 1px solid var(--border);
   padding-top: env(safe-area-inset-top);
@@ -41,14 +93,14 @@ body {
 .topbar-inner { height: 52px; display: flex; align-items: center; padding: 0 16px; }
 #page-title { font-size: 18px; font-weight: 700; letter-spacing: .5px; }
 
-#view { flex: 1; padding: 16px 14px calc(var(--tab-h) + env(safe-area-inset-bottom) + 16px); }
+#view { flex: 1; padding: 16px 14px calc(var(--c-tab-h) + env(safe-area-inset-bottom) + 16px); }
 
 #tabbar {
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
   width: 100%; max-width: 480px;
-  height: calc(var(--tab-h) + env(safe-area-inset-bottom));
+  height: calc(var(--c-tab-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
-  display: flex; background: var(--surface); border-top: 1px solid var(--border); z-index: 30;
+  display: flex; background: var(--surface); border-top: 1px solid var(--border); z-index: var(--g-z-tabbar);
 }
 .tab {
   flex: 1; border: none; background: none; color: var(--text-dim);
@@ -75,9 +127,9 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 .card.tap:active { transform: scale(.985); border-color: var(--primary-light); }
 
 .fab {
-  position: fixed; right: max(16px, calc(50% - 480px/2 + 16px)); bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 18px);
+  position: fixed; right: max(16px, calc(50% - 480px/2 + 16px)); bottom: calc(var(--c-tab-h) + env(safe-area-inset-bottom) + 18px);
   width: 54px; height: 54px; border-radius: 50%; background: var(--primary); color: #fff;
-  border: none; font-size: 26px; box-shadow: 0 8px 22px rgba(31,111,84,.55); cursor: pointer; z-index: 25;
+  border: none; font-size: 26px; box-shadow: var(--g-sh-fab); cursor: pointer; z-index: var(--g-z-fab);
 }
 .fab:active { transform: scale(.94); }
 
@@ -122,7 +174,7 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 .v.profit { color: var(--accent); }
 
 .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-dim); margin-left: 6px; }
-.tag.ongoing { background: rgba(46,145,110,.18); color: var(--primary-light); }
+.tag.ongoing { background: var(--g-c-green-a18); color: var(--primary-light); }
 .tag.finished { background: rgba(255,206,84,.16); color: var(--accent); }
 .tag.settled { background: rgba(224,101,79,.18); color: var(--danger); }
 .tag.stage { background: rgba(47,129,247,.16); color: #6aa9ff; margin-left: 0; }
@@ -139,7 +191,7 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 
 .thumb { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
 
-.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
+.modal-mask { position: fixed; inset: 0; background: var(--g-c-black-a60); z-index: var(--g-z-modal); display: flex; align-items: flex-end; justify-content: center; }
 .modal {
   width: 100%; max-width: 480px; background: var(--surface); border-radius: 18px 18px 0 0;
   padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); max-height: 88vh; max-height: 88dvh; overflow-y: auto;
@@ -150,9 +202,9 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 .modal-actions { display: flex; gap: 10px; margin-top: 16px; }
 
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--tab-h) + 80px); transform: translateX(-50%) translateY(20px);
+  position: fixed; left: 50%; bottom: calc(var(--c-tab-h) + 80px); transform: translateX(-50%) translateY(20px);
   background: #000; color: #fff; padding: 10px 18px; border-radius: 22px; font-size: 14px;
-  opacity: 0; pointer-events: none; transition: all .25s; z-index: 60; max-width: 80%;
+  opacity: 0; pointer-events: none; transition: all .25s; z-index: var(--g-z-float); max-width: 80%;
 }
 .toast.show { opacity: .92; transform: translateX(-50%) translateY(0); }
 
@@ -264,5 +316,5 @@ textarea.ctl { resize: vertical; min-height: 44px; }
 /* 批量管理 */
 .tx.batch { cursor: pointer; }
 .tx.sel { background: rgba(47,129,247,.10); border-radius: 10px; }
-.batch-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(560px, calc(100% - 24px)); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 10px 12px; display: flex; gap: 8px; align-items: center; z-index: 60; }
+.batch-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(560px, calc(100% - 24px)); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 10px 12px; display: flex; gap: 8px; align-items: center; z-index: var(--g-z-float); }
 
