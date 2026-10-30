@@ -6,11 +6,14 @@ let db = fs.readFileSync(path.join(dir, 'js', 'db.js'), 'utf8')
   .replace(/export\s*\{[^}]*\}\s*;?\s*$/m, '');
 let util = fs.readFileSync(path.join(dir, 'js', 'util.js'), 'utf8')
   .replace(/export\s+/g, '');
+let chart = fs.readFileSync(path.join(dir, 'js', 'chart.js'), 'utf8')
+  .replace(/import\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"]\s*;/g, '')
+  .replace(/export\s+/g, '');
 let app = fs.readFileSync(path.join(dir, 'js', 'app.js'), 'utf8')
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"]\s*;/g, '');
 
 const css = fs.readFileSync(path.join(dir, 'css', 'styles.css'), 'utf8');
-const js = db + '\n/* ===== util ===== */\n' + util + '\n/* ===== app ===== */\n' + app;
+const js = db + '\n/* ===== util ===== */\n' + util + '\n/* ===== chart ===== */\n' + chart + '\n/* ===== app ===== */\n' + app;
 
 const err = "window.addEventListener('error',function(e){var v=document.getElementById('view');if(v)v.innerHTML='<div class=\"empty\"><div class=\"big\">⚠️</div><div>出错了：'+((e&&e.message)||e)+'</div></div>';});window.addEventListener('unhandledrejection',function(e){var v=document.getElementById('view');if(v)v.innerHTML='<div class=\"empty\"><div class=\"big\">⚠️</div><div>出错了：'+((e&&e.reason&&e.reason.message)||(e&&e.reason)||e)+'</div></div>';});";
 

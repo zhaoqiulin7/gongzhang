@@ -1,4 +1,4 @@
-const CACHE = 'decor-accounting-v21';
+const CACHE = 'decor-accounting-v22';
 const ASSETS = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const ASSETS = [
   './css/styles.css',
   './js/db.js',
   './js/util.js',
+  './js/chart.js',
   './js/app.js'
 ];
 

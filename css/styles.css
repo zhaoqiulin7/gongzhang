@@ -82,6 +82,15 @@
   --border: #e2d8c3;
   --radius: var(--g-r-lg);
   --shadow: 0 4px 14px rgba(90, 70, 40, .10);
+  /* 图表色阶（v2.4.0 语义层扩展）：环形图/柱状分类配色；图表库只引用本组与 --income/--expense */
+  --chart-1: #2c5f4a; /* 墨绿 */
+  --chart-2: #c04a32; /* 朱砂 */
+  --chart-3: #b8862c; /* 做旧金 */
+  --chart-4: #3a6ea5; /* 靛蓝 */
+  --chart-5: #8a6ea5; /* 藕荷 */
+  --chart-6: #2c8c8a; /* 青碧 */
+  --chart-7: #a1703f; /* 赭石 */
+  --chart-8: #7d8c76; /* 灰绿 */
   /* 语义层扩展：主题差异全部收敛到语义层，深色主题只覆盖这一层 */
   --on-accent: #ffffff;
   --topbar-bg: linear-gradient(180deg, #fbf7ec, #f4eee0);
@@ -130,6 +139,15 @@ html[data-theme="dark"] {
   --row-sel-bg: rgba(47, 129, 247, .10);
   --shadow: var(--g-sh-card);
   --g-sh-fab: 0 8px 22px var(--g-c-green-a55);
+  /* 图表色阶：深底上整体提亮，保持同色相辨识度 */
+  --chart-1: #4caf78;
+  --chart-2: #e0835a;
+  --chart-3: #ffce54;
+  --chart-4: #6aa9ff;
+  --chart-5: #b79ada;
+  --chart-6: #57c3bf;
+  --chart-7: #d3a06a;
+  --chart-8: #9bb0a4;
 }
 
 /* 暖纸纹理：极低透明度颗粒覆盖（不影响交互，深色下更弱） */
@@ -394,3 +412,62 @@ textarea.ctl { resize: vertical; min-height: 44px; }
 .tx.batch { cursor: pointer; }
 .tx.sel { background: var(--row-sel-bg); border-radius: var(--g-r-md); }
 .batch-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(560px, calc(100% - 24px)); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: var(--g-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: var(--g-sp-c10) var(--g-sp-3); display: flex; gap: var(--g-sp-2); align-items: center; z-index: var(--g-z-float); }
+
+/* ============================================================
+   v2.4.0 图表（js/chart.js）：SVG 图表 + 图例 + 构成条
+   颜色只用语义层（--chart-1..8 / --income / --expense / --border / --text-dim），
+   深色主题自动跟随，本段不含任何主题分支。
+   ============================================================ */
+.chart-svg { width: 100%; }
+.chart-svg svg { display: block; width: 100%; height: auto; }
+.chart-empty { text-align: center; color: var(--text-dim); font-size: var(--g-fs-md); padding: var(--g-sp-5) 0; }
+.chart-note { display: flex; flex-wrap: wrap; gap: var(--g-sp-1) var(--g-sp-3); font-size: var(--g-fs-sm); color: var(--text-dim); margin-top: var(--g-sp-2); }
+.note-i { display: inline-flex; align-items: center; gap: var(--g-sp-1); }
+
+/* 环形图：图在上、图例在下占满整行。
+   400px 窄屏下左右布局会把图例名称压到 3~4 个字，故改为纵向排布保证中文分类名可读 */
+.chart-donut { display: flex; flex-direction: column; align-items: center; gap: var(--g-sp-3); }
+.donut-seg { cursor: pointer; transition: opacity .15s; }
+.donut-seg:active { opacity: .6; }
+.donut-cv { font-size: 15px; font-weight: 800; fill: var(--text); }
+.donut-ck { font-size: 11px; fill: var(--text-dim); }
+.donut-cv.sm { font-size: 12px; }
+.donut-ck.sm { font-size: 10px; }
+.bar-l { font-size: 10px; fill: var(--text-dim); }
+.col-hit { cursor: pointer; }
+.chart-caption { font-size: var(--g-fs-sm); color: var(--text-dim); margin-top: var(--g-sp-2); line-height: 1.45; }
+
+.chart-legend { width: 100%; display: flex; flex-direction: column; gap: var(--g-sp-c3); }
+.lg-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--g-sp-2);
+  font-size: var(--g-fs-sm); font-weight: 700; color: var(--text);
+  margin-top: var(--g-sp-1); padding-bottom: var(--g-sp-1); border-bottom: 1px solid var(--border);
+}
+.chart-legend > .lg-head:first-child { margin-top: 0; }
+.lg-hv { font-weight: 600; color: var(--text-dim); }
+.lg-row {
+  display: flex; align-items: center; gap: var(--g-sp-2); font-size: var(--g-fs-sm);
+  padding: var(--g-sp-c3) var(--g-sp-1); border-radius: var(--g-r-sm); cursor: pointer;
+}
+.lg-row:active { background: var(--surface-2); }
+.lg-dot { width: 9px; height: 9px; border-radius: var(--g-r-bar); flex: 0 0 auto; }
+.lg-n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.lg-v { flex: 0 0 auto; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.lg-p { flex: 0 0 34px; text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* 迷你排行条（品类/子类拆解） */
+.rank-bars { display: flex; flex-direction: column; gap: var(--g-sp-3); }
+.rank-row.tap { cursor: pointer; }
+.rank-row.tap:active { opacity: .65; }
+.rank-t { display: flex; align-items: baseline; justify-content: space-between; gap: var(--g-sp-2); }
+.rank-n { font-size: var(--g-fs-ctl); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-v { font-size: var(--g-fs-sm); color: var(--text-dim); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.rank-track { height: 8px; background: var(--surface-2); border-radius: var(--g-r-bar); overflow: hidden; margin-top: var(--g-sp-c5); }
+.rank-fill { display: block; height: 100%; border-radius: var(--g-r-bar); }
+
+/* 统计口径切换说明 */
+.basis-note { font-size: var(--g-fs-sm); color: var(--text-dim); margin: var(--g-sp-1) 0 var(--g-sp-3); line-height: 1.45; }
+.delta-chip { display: inline-flex; align-items: center; gap: var(--g-sp-1); font-size: var(--g-fs-sm); }
+.delta-chip .d { font-weight: 700; }
+.delta-up { color: var(--danger); }   /* 支出增加 = 红 */
+.delta-down { color: var(--income); } /* 支出减少 = 绿 */

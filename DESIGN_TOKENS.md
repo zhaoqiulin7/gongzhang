@@ -102,3 +102,34 @@ JS/HTML 内联样式中需要取 Token 时，用 `var(--语义名)`（如 `style
 
 > 批次 2/3/6 迁移均为等值替换，已通过 400/360 三视口审计与截图目检；
 > 进度条圆角统一为 `--g-r-bar`（5px）。
+
+### 4.2 图表色阶 `--chart-1..8`（v2.4.0 引入）
+
+`js/chart.js`（轻量 SVG 图表库）只从语义层取色，除收支专用色 `--income/--expense`
+与轴线 `--border/--text-dim` 外，分类配色统一走 8 色阶：
+
+```
+暖纸账本（:root 默认）          墨绿夜读（dark 覆盖）
+--chart-1: #2c5f4a 墨绿         --chart-1: #4caf78
+--chart-2: #c04a32 朱砂         --chart-2: #e0835a
+--chart-3: #b8862c 做旧金        --chart-3: #ffce54
+--chart-4: #3a6ea5 靛蓝         --chart-4: #6aa9ff
+--chart-5: #8a6ea5 藕荷         --chart-5: #b79ada
+--chart-6: #2c8c8a 青碧         --chart-6: #57c3bf
+--chart-7: #a1703f 赭石         --chart-7: #d3a06a
+--chart-8: #7d8c76 灰绿         --chart-8: #9bb0a4
+```
+
+规则：
+- **图表代码禁止写死十六进制色**，一律 `var(--chart-n)` / `var(--income)` / `var(--expense)`；
+  主题切换自动跟随，不需要任何 `html[data-theme=...]` 分支（长图分享的 canvas 分支例外，
+  它通过 `getComputedStyle(document.documentElement).getPropertyValue('--chart-n')` 读取同一组 Token）。
+- 同一张图里同一个分类必须映射到同一个色号（按数据下标取模 `chartPalette(i)`），保证图例与扇区同色。
+- 收支柱状/折线固定用 `--income`（收）与 `--expense`（支），不占用 8 色阶。
+
+### 4.3 图表使用约定
+
+- 图表只负责「画」，不负责取数与业务口径；所有金额文案由调用方传入（`text` 字段），
+  以便统一尊重「隐藏金额」开关与 `M()` 金额格式。
+- 环形图中心文案用紧凑金额 `MK()`（¥1.2 万），避免长金额撑破 400px 窄屏；列表/图例用完整 `M()`。
+- 环形图分类超过 6–7 项时用 `topNItems()` 把长尾并成「其他 N 项」，避免碎片化。

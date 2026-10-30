@@ -94,6 +94,15 @@
   --border: #e2d8c3;
   --radius: var(--g-r-lg);
   --shadow: 0 4px 14px rgba(90, 70, 40, .10);
+  /* 图表色阶（v2.4.0 语义层扩展）：环形图/柱状分类配色；图表库只引用本组与 --income/--expense */
+  --chart-1: #2c5f4a; /* 墨绿 */
+  --chart-2: #c04a32; /* 朱砂 */
+  --chart-3: #b8862c; /* 做旧金 */
+  --chart-4: #3a6ea5; /* 靛蓝 */
+  --chart-5: #8a6ea5; /* 藕荷 */
+  --chart-6: #2c8c8a; /* 青碧 */
+  --chart-7: #a1703f; /* 赭石 */
+  --chart-8: #7d8c76; /* 灰绿 */
   /* 语义层扩展：主题差异全部收敛到语义层，深色主题只覆盖这一层 */
   --on-accent: #ffffff;
   --topbar-bg: linear-gradient(180deg, #fbf7ec, #f4eee0);
@@ -142,6 +151,15 @@ html[data-theme="dark"] {
   --row-sel-bg: rgba(47, 129, 247, .10);
   --shadow: var(--g-sh-card);
   --g-sh-fab: 0 8px 22px var(--g-c-green-a55);
+  /* 图表色阶：深底上整体提亮，保持同色相辨识度 */
+  --chart-1: #4caf78;
+  --chart-2: #e0835a;
+  --chart-3: #ffce54;
+  --chart-4: #6aa9ff;
+  --chart-5: #b79ada;
+  --chart-6: #57c3bf;
+  --chart-7: #d3a06a;
+  --chart-8: #9bb0a4;
 }
 
 /* 暖纸纹理：极低透明度颗粒覆盖（不影响交互，深色下更弱） */
@@ -406,6 +424,65 @@ textarea.ctl { resize: vertical; min-height: 44px; }
 .tx.batch { cursor: pointer; }
 .tx.sel { background: var(--row-sel-bg); border-radius: var(--g-r-md); }
 .batch-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(560px, calc(100% - 24px)); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: var(--g-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: var(--g-sp-c10) var(--g-sp-3); display: flex; gap: var(--g-sp-2); align-items: center; z-index: var(--g-z-float); }
+
+/* ============================================================
+   v2.4.0 图表（js/chart.js）：SVG 图表 + 图例 + 构成条
+   颜色只用语义层（--chart-1..8 / --income / --expense / --border / --text-dim），
+   深色主题自动跟随，本段不含任何主题分支。
+   ============================================================ */
+.chart-svg { width: 100%; }
+.chart-svg svg { display: block; width: 100%; height: auto; }
+.chart-empty { text-align: center; color: var(--text-dim); font-size: var(--g-fs-md); padding: var(--g-sp-5) 0; }
+.chart-note { display: flex; flex-wrap: wrap; gap: var(--g-sp-1) var(--g-sp-3); font-size: var(--g-fs-sm); color: var(--text-dim); margin-top: var(--g-sp-2); }
+.note-i { display: inline-flex; align-items: center; gap: var(--g-sp-1); }
+
+/* 环形图：图在上、图例在下占满整行。
+   400px 窄屏下左右布局会把图例名称压到 3~4 个字，故改为纵向排布保证中文分类名可读 */
+.chart-donut { display: flex; flex-direction: column; align-items: center; gap: var(--g-sp-3); }
+.donut-seg { cursor: pointer; transition: opacity .15s; }
+.donut-seg:active { opacity: .6; }
+.donut-cv { font-size: 15px; font-weight: 800; fill: var(--text); }
+.donut-ck { font-size: 11px; fill: var(--text-dim); }
+.donut-cv.sm { font-size: 12px; }
+.donut-ck.sm { font-size: 10px; }
+.bar-l { font-size: 10px; fill: var(--text-dim); }
+.col-hit { cursor: pointer; }
+.chart-caption { font-size: var(--g-fs-sm); color: var(--text-dim); margin-top: var(--g-sp-2); line-height: 1.45; }
+
+.chart-legend { width: 100%; display: flex; flex-direction: column; gap: var(--g-sp-c3); }
+.lg-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--g-sp-2);
+  font-size: var(--g-fs-sm); font-weight: 700; color: var(--text);
+  margin-top: var(--g-sp-1); padding-bottom: var(--g-sp-1); border-bottom: 1px solid var(--border);
+}
+.chart-legend > .lg-head:first-child { margin-top: 0; }
+.lg-hv { font-weight: 600; color: var(--text-dim); }
+.lg-row {
+  display: flex; align-items: center; gap: var(--g-sp-2); font-size: var(--g-fs-sm);
+  padding: var(--g-sp-c3) var(--g-sp-1); border-radius: var(--g-r-sm); cursor: pointer;
+}
+.lg-row:active { background: var(--surface-2); }
+.lg-dot { width: 9px; height: 9px; border-radius: var(--g-r-bar); flex: 0 0 auto; }
+.lg-n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.lg-v { flex: 0 0 auto; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.lg-p { flex: 0 0 34px; text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* 迷你排行条（品类/子类拆解） */
+.rank-bars { display: flex; flex-direction: column; gap: var(--g-sp-3); }
+.rank-row.tap { cursor: pointer; }
+.rank-row.tap:active { opacity: .65; }
+.rank-t { display: flex; align-items: baseline; justify-content: space-between; gap: var(--g-sp-2); }
+.rank-n { font-size: var(--g-fs-ctl); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-v { font-size: var(--g-fs-sm); color: var(--text-dim); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.rank-track { height: 8px; background: var(--surface-2); border-radius: var(--g-r-bar); overflow: hidden; margin-top: var(--g-sp-c5); }
+.rank-fill { display: block; height: 100%; border-radius: var(--g-r-bar); }
+
+/* 统计口径切换说明 */
+.basis-note { font-size: var(--g-fs-sm); color: var(--text-dim); margin: var(--g-sp-1) 0 var(--g-sp-3); line-height: 1.45; }
+.delta-chip { display: inline-flex; align-items: center; gap: var(--g-sp-1); font-size: var(--g-fs-sm); }
+.delta-chip .d { font-weight: 700; }
+.delta-up { color: var(--danger); }   /* 支出增加 = 红 */
+.delta-down { color: var(--income); } /* 支出减少 = 绿 */
 
 </style>
 <title>装修记账</title>
@@ -1071,7 +1148,333 @@ function setPageTitle(t) {
   if (el) el.textContent = t;
 }
 
+/* ===== chart ===== */
+/* ============================================================
+   轻量 SVG 图表库（v2.4.0）
+   —— 零第三方依赖，纯 SVG + 少量 HTML，适配 400px 窄屏
+   —— 配色一律引用「语义层」Token（--chart-1..8 / --income / --expense / --border），
+      深色主题只覆盖语义层，图表自动跟随，无需任何主题分支代码
+   —— 每个图表返回 DOM 节点；点击统一走 opts.onPick(index, item, ringIndex, ring)
+   规则：图表只负责「画」，不负责取数与业务口径；数值文案由调用方传入（尊重隐藏金额）
+   ============================================================ */
+
+const CHART_N = 8;
+function chartPalette(i) { return 'var(--chart-' + ((i % CHART_N) + 1) + ')'; }
+
+// XML 转义（用于 SVG 内文本与 title）；实体用码点拼接，避免源码里出现裸实体
+const _AMP = String.fromCharCode(38);
+const XESC_MAP = { '&': _AMP + 'amp;', '<': _AMP + 'lt;', '>': _AMP + 'gt;', '"': _AMP + 'quot;', "'": _AMP + '#39;' };
+function xEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => XESC_MAP[c] || c);
+}
+
+// 紧凑数字：轴标签/图例用，避免长金额撑破窄屏
+function compactNum(n) {
+  const v = Number(n) || 0, a = Math.abs(v);
+  if (a >= 1e8) return (v / 1e8).toFixed(2).replace(/\.?0+$/, '') + '亿';
+  if (a >= 1e4) return (v / 1e4).toFixed(1).replace(/\.0$/, '') + '万';
+  // 万元以下保持整数原样（¥8,000 比 ¥8.0k 更符合中文记账习惯，也不占额外宽度）
+  return String(Math.round(v));
+}
+function pctText(v, total) {
+  const t = Number(total) || 0;
+  if (!t) return '0%';
+  return Math.round((Number(v) || 0) / t * 100) + '%';
+}
+function shortLabel(s, n) {
+  s = String(s == null ? '' : s);
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+// SVG 容器：viewBox 固定、width:100%，高度按宽高比自适应（CSS 里 height:auto）
+function svgWrap(vw, vh, inner, cls) {
+  const d = document.createElement('div');
+  d.className = 'chart-svg' + (cls ? ' ' + cls : '');
+  d.innerHTML = '<svg viewBox="0 0 ' + vw + ' ' + vh + '" width="100%" preserveAspectRatio="xMidYMid meet" role="img">'
+    + inner + '</svg>';
+  return d;
+}
+function emptyNode(text) {
+  const d = document.createElement('div');
+  d.className = 'chart-empty';
+  d.textContent = text || '暂无数据';
+  return d;
+}
+
+/* ---------- 环形图（支持单环 / 同心多环） ----------
+   opts: {
+     items: [{label, value, text?, color?}]        // 单环简写
+     rings: [{name, thickness, items:[...]}]       // 多环（外 → 内，外侧先写）
+     size, thickness, centerValue, centerKey, fmt, onPick, emptyText
+   }
+   注：value 必须 > 0 才会出现；text 为调用方格式化好的展示文案
+--------------------------------------------------- */
+function donutChart(o) {
+  o = o || {};
+  const size = o.size || 168;
+  const cx = size / 2, cy = size / 2;
+  const fmt = o.fmt || compactNum;
+  const rawRings = o.rings && o.rings.length
+    ? o.rings
+    : [{ items: o.items || [], thickness: o.thickness || 26 }];
+  const rings = rawRings.map((rg) => {
+    const items = (rg.items || [])
+      .map((x, i) => ({
+        label: x.label, value: Number(x.value) || 0,
+        text: x.text != null ? x.text : fmt(x.value),
+        color: x.color || chartPalette(i),
+        idx: x.idx == null ? i : x.idx,
+        onPick: x.onPick
+      }))
+      .filter((x) => x.value > 0);
+    const total = items.reduce((s, x) => s + x.value, 0);
+    return { name: rg.name || '', thickness: rg.thickness || 26, items: items, total: total };
+  }).filter((r) => r.items.length && r.total > 0);
+
+  if (!rings.length) return emptyNode(o.emptyText);
+
+  const parts = [];
+  let rr = size / 2 - 2;
+  rings.forEach((ring, ri) => {
+    const t = ring.thickness;
+    const rad = Math.max(6, rr - t / 2);
+    rr = rad - t / 2 - 3; // 环间留白
+    const C = 2 * Math.PI * rad;
+    parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + rad.toFixed(2) + '" fill="none" stroke="var(--surface-2)" stroke-width="' + t + '" opacity=".7"/>');
+    let acc = 0;
+    ring.items.forEach((it) => {
+      const frac = it.value / ring.total;
+      const len = C * frac;
+      const gap = ring.items.length > 1 ? Math.min(2.5, len * 0.1) : 0;
+      const dash = Math.max(0.8, len - gap);
+      const off = -acc;
+      acc += len;
+      parts.push('<circle class="donut-seg" data-r="' + ri + '" data-i="' + it.idx + '" cx="' + cx + '" cy="' + cy
+        + '" r="' + rad.toFixed(2) + '" fill="none" stroke="' + it.color + '" stroke-width="' + t
+        + '" stroke-dasharray="' + dash.toFixed(2) + ' ' + (C - dash).toFixed(2) + '" stroke-dashoffset="' + off.toFixed(2)
+        + '" transform="rotate(-90 ' + cx + ' ' + cy + ')"><title>'
+        + xEsc(it.label + ' ' + it.text + ' · ' + Math.round(frac * 100) + '%') + '</title></circle>');
+    });
+  });
+
+  // 中心文案：双环时中心孔很小，用 centerSmall 缩一档
+  const sm = o.centerSmall ? ' sm' : '';
+  if (o.centerValue != null) {
+    const hasKey = !!o.centerKey;
+    parts.push('<text class="donut-cv' + sm + '" x="' + cx + '" y="'
+      + (hasKey ? (o.centerSmall ? cy - 2 : cy + 1) : cy + 6)
+      + '" text-anchor="middle">' + xEsc(o.centerValue) + '</text>');
+  }
+  if (o.centerKey) {
+    parts.push('<text class="donut-ck' + sm + '" x="' + cx + '" y="' + (cy + (o.centerSmall ? 13 : 17))
+      + '" text-anchor="middle">' + xEsc(o.centerKey) + '</text>');
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-donut';
+  const box = svgWrap(size, size, parts.join(''), 'donut-svg');
+  box.style.width = size + 'px';
+  wrap.appendChild(box);
+
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  rings.forEach((ring, ri) => {
+    if (rings.length > 1) {
+      const head = document.createElement('div');
+      head.className = 'lg-head';
+      head.innerHTML = '<span>' + xEsc(ring.name) + '</span><span class="lg-hv">'
+        + xEsc(o.ringText ? o.ringText(ring) : fmt(ring.total)) + '</span>';
+      legend.appendChild(head);
+    }
+    ring.items.forEach((it) => {
+      const row = document.createElement('div');
+      row.className = 'lg-row';
+      row.setAttribute('data-r', String(ri));
+      row.setAttribute('data-i', String(it.idx));
+      row.innerHTML = '<i class="lg-dot" style="background:' + it.color + '"></i>'
+        + '<span class="lg-n">' + xEsc(it.label) + '</span>'
+        + '<span class="lg-v">' + xEsc(it.text) + '</span>'
+        + '<span class="lg-p">' + pctText(it.value, ring.total) + '</span>';
+      legend.appendChild(row);
+    });
+  });
+  wrap.appendChild(legend);
+
+  if (typeof o.onPick === 'function') {
+    wrap.addEventListener('click', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest('[data-i]') : null;
+      if (!t || !wrap.contains(t)) return;
+      const ri = Number(t.getAttribute('data-r') || 0);
+      const ii = Number(t.getAttribute('data-i'));
+      const ring = rings[ri];
+      if (!ring) return;
+      let it = null;
+      ring.items.forEach((x) => { if (x.idx === ii) it = x; });
+      if (it) o.onPick(ii, it, ri, ring);
+    });
+  }
+  return wrap;
+}
+
+/* ---------- 分组柱状图（收入 / 支出双柱） ----------
+   opts: { items:[{label, a, b, aText?, bText?}], aName, bName, aColor, bColor,
+           h, labelLen, onPick, emptyText }
+--------------------------------------------------- */
+function groupedBars(o) {
+  o = o || {};
+  const items = o.items || [];
+  if (!items.length) return emptyNode(o.emptyText);
+  const W = 360, H = o.h || 150;
+  const padT = 14, padB = 26, padX = 10;
+  const plotH = H - padT - padB, base = padT + plotH;
+  const maxV = Math.max.apply(null, [1].concat(items.map((it) => Math.max(Number(it.a) || 0, Number(it.b) || 0))));
+  const n = items.length, gw = (W - padX * 2) / n;
+  const bw = Math.min(13, Math.max(4, gw * 0.34));
+  const step = n > 7 ? Math.ceil(n / 7) : 1;
+  const aC = o.aColor || 'var(--income)', bC = o.bColor || 'var(--expense)';
+  const parts = [], hits = [];
+  parts.push('<line x1="' + padX + '" y1="' + base + '" x2="' + (W - padX) + '" y2="' + base + '" stroke="var(--border)" stroke-width="1"/>');
+  parts.push('<line x1="' + padX + '" y1="' + padT + '" x2="' + (W - padX) + '" y2="' + padT + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity=".6"/>');
+  items.forEach((it, i) => {
+    const cx = padX + gw * (i + 0.5);
+    const va = Number(it.a) || 0, vb = Number(it.b) || 0;
+    const ha = va > 0 ? Math.max(2, va / maxV * plotH) : 0;
+    const hb = vb > 0 ? Math.max(2, vb / maxV * plotH) : 0;
+    const tip = xEsc(it.label || '') + '　' + (o.aName || '收') + ' ' + (it.aText || compactNum(va))
+      + ' / ' + (o.bName || '支') + ' ' + (it.bText || compactNum(vb));
+    if (ha) parts.push('<rect x="' + (cx - bw - 2).toFixed(2) + '" y="' + (base - ha).toFixed(2) + '" width="' + bw.toFixed(2)
+      + '" height="' + ha.toFixed(2) + '" rx="3" fill="' + aC + '"><title>' + tip + '</title></rect>');
+    if (hb) parts.push('<rect x="' + (cx + 2).toFixed(2) + '" y="' + (base - hb).toFixed(2) + '" width="' + bw.toFixed(2)
+      + '" height="' + hb.toFixed(2) + '" rx="3" fill="' + bC + '" opacity=".85"><title>' + tip + '</title></rect>');
+    if (i % step === 0) {
+      parts.push('<text class="bar-l" x="' + cx.toFixed(2) + '" y="' + (H - 9) + '" text-anchor="middle">'
+        + xEsc(shortLabel(it.label, o.labelLen || 4)) + '</text>');
+    }
+    hits.push('<rect class="col-hit" data-i="' + i + '" x="' + (padX + gw * i).toFixed(2) + '" y="0" width="'
+      + gw.toFixed(2) + '" height="' + H + '" fill="transparent"><title>' + tip + '</title></rect>');
+  });
+  const wrap = svgWrap(W, H, parts.join('') + hits.join(''));
+  if (typeof o.onPick === 'function') {
+    wrap.addEventListener('click', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest('[data-i]') : null;
+      if (!t || !wrap.contains(t)) return;
+      const i = Number(t.getAttribute('data-i'));
+      if (items[i]) o.onPick(i, items[i]);
+    });
+  }
+  return wrap;
+}
+
+/* ---------- 折线 / 面积图（多序列） ----------
+   opts: { labels:[], series:[{name, color, data:[], area?, dash?}], h, onPick, emptyText, fmt }
+--------------------------------------------------- */
+function lineChart(o) {
+  o = o || {};
+  const labels = o.labels || [];
+  const series = (o.series || []).filter((s) => s && s.data && s.data.length);
+  if (!labels.length || !series.length) return emptyNode(o.emptyText);
+  const W = 360, H = o.h || 140;
+  const padT = 14, padB = 24, padL = 12, padR = 12;
+  const plotH = H - padT - padB, base = padT + plotH;
+  const n = labels.length;
+  // 支持负值（如结余为负）：纵轴按 [minV, maxV] 归一，0 轴单独画
+  let maxV = 0, minV = 0;
+  series.forEach((s) => s.data.forEach((v) => { const x = Number(v) || 0; if (x > maxV) maxV = x; if (x < minV) minV = x; }));
+  if (maxV === minV) maxV = minV + 1;
+  const span = maxV - minV;
+  const xAt = (i) => padL + (W - padL - padR) * (n === 1 ? 0.5 : i / (n - 1));
+  const yAt = (v) => padT + plotH * (1 - ((Number(v) || 0) - minV) / span);
+  const zeroY = minV < 0 ? yAt(0) : base;
+  const step = n > 7 ? Math.ceil(n / 7) : 1;
+  const parts = [];
+  [0, 0.5, 1].forEach((f) => {
+    const y = padT + plotH * (1 - f);
+    parts.push('<line x1="' + padL + '" y1="' + y.toFixed(2) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(2)
+      + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity=".55"/>');
+  });
+  if (minV < 0) {
+    parts.push('<line x1="' + padL + '" y1="' + zeroY.toFixed(2) + '" x2="' + (W - padR) + '" y2="' + zeroY.toFixed(2)
+      + '" stroke="var(--text-dim)" stroke-width="1" opacity=".5"/>');
+  }
+  series.forEach((s, si) => {
+    const color = s.color || chartPalette(si);
+    const pts = s.data.map((v, i) => xAt(i).toFixed(2) + ',' + yAt(v).toFixed(2));
+    if (s.area) {
+      parts.push('<path d="M ' + xAt(0).toFixed(2) + ' ' + zeroY.toFixed(2) + ' L ' + pts.join(' L ') + ' L '
+        + xAt(n - 1).toFixed(2) + ' ' + zeroY.toFixed(2) + ' Z" fill="' + color + '" opacity=".14"/>');
+    }
+    parts.push('<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2.4"'
+      + ' stroke-linejoin="round" stroke-linecap="round"' + (s.dash ? ' stroke-dasharray="5 4"' : '') + '/>');
+    s.data.forEach((v, i) => {
+      parts.push('<circle cx="' + xAt(i).toFixed(2) + '" cy="' + yAt(v).toFixed(2) + '" r="2.8" fill="var(--surface)" stroke="'
+        + color + '" stroke-width="2"><title>' + xEsc((labels[i] || '') + ' ' + (s.name || '') + ' '
+        + (o.fmt ? o.fmt(v) : compactNum(v))) + '</title></circle>');
+    });
+  });
+  labels.forEach((lb, i) => {
+    if (i % step) return;
+    parts.push('<text class="bar-l" x="' + xAt(i).toFixed(2) + '" y="' + (H - 8) + '" text-anchor="middle">'
+      + xEsc(shortLabel(lb, 5)) + '</text>');
+  });
+  const hits = [];
+  for (let i = 0; i < n; i++) {
+    const half = (W - padL - padR) / (n * 2) + 1;
+    hits.push('<rect class="col-hit" data-i="' + i + '" x="' + Math.max(0, xAt(i) - half).toFixed(2) + '" y="0" width="'
+      + (half * 2).toFixed(2) + '" height="' + H + '" fill="transparent"/>');
+  }
+  const wrap = svgWrap(W, H, parts.join('') + hits.join(''));
+  if (typeof o.onPick === 'function') {
+    wrap.addEventListener('click', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest('[data-i]') : null;
+      if (!t || !wrap.contains(t)) return;
+      const i = Number(t.getAttribute('data-i'));
+      if (i >= 0 && i < n) o.onPick(i, labels[i]);
+    });
+  }
+  return wrap;
+}
+
+/* ---------- 迷你横条（图例式排行，替代纯 CSS .bar，带多色） ----------
+   items: [{label, value, text?, color?, onPick?}]；max 自动取最大
+------------------------------------------------------------------ */
+function rankBars(items, o) {
+  o = o || {};
+  const list = (items || []).filter((x) => (Number(x.value) || 0) > 0);
+  const wrap = document.createElement('div');
+  wrap.className = 'rank-bars';
+  if (!list.length) { wrap.className = 'chart-empty'; wrap.textContent = o.emptyText || '暂无数据'; return wrap; }
+  const maxV = Math.max.apply(null, list.map((x) => Number(x.value) || 0));
+  list.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.className = 'rank-row' + (it.onPick ? ' tap' : '');
+    const v = Number(it.value) || 0;
+    row.innerHTML = '<div class="rank-t"><span class="rank-n">' + xEsc(it.label) + '</span>'
+      + '<span class="rank-v">' + xEsc(it.text != null ? it.text : compactNum(v)) + '</span></div>'
+      + '<div class="rank-track"><i class="rank-fill" style="width:'
+      + Math.max(3, v / maxV * 100).toFixed(1) + '%;background:' + (it.color || o.color || chartPalette(i)) + '"></i></div>';
+    if (it.onPick) row.addEventListener('click', it.onPick);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+/* ---------- 图表图例（纯说明，配合 lineChart / groupedBars） ----------
+   items: [{name, color, dash?}]
+------------------------------------------------------------------ */
+function chartLegend(items) {
+  const d = document.createElement('div');
+  d.className = 'chart-note';
+  (items || []).forEach((it) => {
+    const s = document.createElement('span');
+    s.className = 'note-i';
+    s.innerHTML = '<i class="lg-dot" style="background:' + it.color + '"></i>' + xEsc(it.name);
+    d.appendChild(s);
+  });
+  return d;
+}
+
 /* ===== app ===== */
+
 
 
 
@@ -1081,7 +1484,11 @@ const state = {
   ledgerRange: 'month', ledgerCat: 'all', ledgerSub: 'all', ledgerAccount: 'all',
   ledgerProject: 'all', ledgerQ: '', ledgerSort: 'date',
   ledgerBatch: false, ledgerSel: {},
-  statsRange: 'year', statsDim: 'project',
+  // v2.4.0 统计：basis=口径（start 项目开工年 / date 发生日期）；statsYear=开工年口径下的年份
+  statsRange: 'year', statsDim: 'project', statsBasis: 'start', statsYear: '',
+  statsForm: 'bar', statsTrend: 'line', statsCat: 'all',
+  // 统计下钻：{label, ids[]} 锁定一组流水，交给流水页精确展示
+  ledgerDrill: null,
   reconStatus: 'all', ledgerCustom: null
 };
 
@@ -1635,10 +2042,20 @@ async function ledgerView() {
   if (state.ledgerRange === 'custom' && state.ledgerCustom) {
     rg = { key: 'custom', label: state.ledgerCustom.label, sub: '', from: state.ledgerCustom.from, to: state.ledgerCustom.to };
   }
-  let list = txs.filter((t) => {
-    const d = fmtDate(t.date);
-    return d >= rg.from && d <= rg.to;
-  });
+  // v2.4.0：统计下钻——直接锁定一组流水 id（比按日期区间回查精确，跨年项目不会串年份）
+  const drill = state.ledgerDrill;
+  let drillMap = null;
+  if (drill && drill.ids && drill.ids.length) {
+    drillMap = {};
+    drill.ids.forEach((id) => { drillMap[id] = 1; });
+    rg = { key: 'drill', label: drill.label, sub: drill.ids.length + ' 笔', from: '0000-01-01', to: '9999-12-31' };
+  }
+  let list = drillMap
+    ? txs.filter((t) => drillMap[t.id])
+    : txs.filter((t) => {
+      const d = fmtDate(t.date);
+      return d >= rg.from && d <= rg.to;
+    });
   if (state.ledgerCat !== 'all') list = list.filter((t) => (t.category || '') === state.ledgerCat);
   if (state.ledgerSub !== 'all') list = list.filter((t) => (t.subCat || '') === state.ledgerSub);
   if (state.ledgerAccount !== 'all') list = list.filter((t) => (t.account || t.method || '') === state.ledgerAccount);
@@ -1664,6 +2081,17 @@ async function ledgerView() {
   });
 
   const wrap = h('div');
+
+  // v2.4.0：统计下钻提示条（口径锁定期间，日期区间与维度筛选在其之上继续生效）
+  if (drillMap) {
+    wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px' }, [
+      h('div', { style: 'min-width:0;flex:1' }, [
+        h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '📊 统计下钻'),
+        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, drill.label)
+      ]),
+      h('button', { class: 'btn sm ghost', onclick: () => { state.ledgerDrill = null; state.ledgerRange = 'month'; render(); } }, '退出')
+    ]));
+  }
 
   // 常用模板（一键套用）
   const tpls = await getTemplates();
@@ -2092,6 +2520,37 @@ async function projectDetailView(id) {
     stat('笔数', String(st.count), '')
   ]);
   wrap.appendChild(profitCard);
+
+  // v2.4.0：支出构成环形图（按一级分类），点扇区/图例进流水看本项目的该类支出
+  const pTxList = await Transactions.byProject(id);
+  const cmap = {};
+  pTxList.forEach((t) => {
+    if (!isExpense(t)) return;
+    const c = t.category || '未分类';
+    cmap[c] = (cmap[c] || 0) + (Number(t.amount) || 0);
+  });
+  const catRows = Object.keys(cmap).map((k) => ({ label: k, value: cmap[k] })).sort((a, b) => b.value - a.value);
+  if (catRows.length) {
+    let ctotal = 0; catRows.forEach((x) => { ctotal += x.value; });
+    const catCard = h('div', { class: 'card' });
+    catCard.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:8px' }, [
+      h('span', { style: 'font-weight:700' }, '支出构成'),
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '合计 ' + M(st.expense))
+    ]));
+    catCard.appendChild(donutChart({
+      items: topNItems(catRows.map((x, i) => ({ label: x.label, value: x.value, text: M(x.value), idx: i })), 6, M),
+      size: 148, thickness: 26,
+      centerValue: MK(ctotal), centerKey: '支出合计',
+      onPick: (idx, it) => {
+        state.ledgerDrill = null;
+        state.ledgerProject = id; state.ledgerCat = it.label; state.ledgerSub = 'all';
+        state.ledgerAccount = 'all'; state.ledgerQ = ''; state.ledgerRange = 'all';
+        location.hash = '#/ledger/all';
+      }
+    }));
+    catCard.appendChild(h('div', { class: 'chart-caption' }, '点击品类可看本项目的该类支出流水'));
+    wrap.appendChild(catCard);
+  }
 
   // P2：成本预算使用进度（超支红/接近黄）
   const budget = Number(p.costBudget) || 0;
@@ -2675,35 +3134,100 @@ async function viewBill(b, reopen) {
 }
 
 // ---------- 设置 ----------
-// ---------- 统计报表（P3）：时间范围 + 维度拆解 + 未开票收款清单 ----------
+// ---------- 统计报表（v2.4.0）：统计口径 + 多形态图表 + 品类分析 ----------
+// 统计口径（state.statsBasis）：
+//   date  —— 按流水发生日期筛选
+//   start —— 按项目开工年份归档（默认）：某年开工的项目，其全部流水都计入该年统计。
+//            装修项目普遍跨年收付款，用开工年归档才能反映「这一年接的活」的真实经营结果；
+//            未关联项目的流水按发生日期年份归属，保证总数不漏。
 async function statsView() {
   setPageTitle('统计报表');
   const [projects, txs] = await Promise.all([Projects.all(), Transactions.all()]);
   const wrap = h('div');
-  const ranges = timeRanges();
-  const rg = ranges.find((r) => r.key === state.statsRange) || ranges[4]; // 默认本年
-  const pname = (id) => { const p = projects.find((x) => x.id === id); return p ? p.name : '未关联项目'; };
+  const pmap = {}; projects.forEach((p) => { pmap[p.id] = p; });
+  const pname = (id) => { const p = pmap[id]; return p ? p.name : '未关联项目'; };
+  const txYear = (t) => (fmtDate(t.date) || '').slice(0, 4);
+  const startYearOf = (t) => {
+    const p = pmap[t.projectId];
+    return (p ? (fmtDate(p.startDate) || '').slice(0, 4) : '') || txYear(t);
+  };
+  const basis = state.statsBasis || 'start';
 
-  // 时间范围切换（与流水页同一套区间）
-  const pills = h('div', { class: 'pill-tabs' });
-  ranges.forEach((r) => pills.appendChild(h('button', { class: 'pill' + (r.key === rg.key ? ' on' : ''), onclick: () => { state.statsRange = r.key; render(); } }, r.label)));
-  wrap.appendChild(pills);
+  // ① 统计口径
+  wrap.appendChild(h('div', { class: 'seg', style: 'margin-bottom:var(--g-sp-3)' }, [
+    h('button', { class: basis === 'date' ? 'on' : '', onclick: () => { state.statsBasis = 'date'; render(); } }, '按发生日期'),
+    h('button', { class: basis === 'start' ? 'on' : '', onclick: () => { state.statsBasis = 'start'; render(); } }, '按项目开工年')
+  ]));
 
-  const inRange = txs.filter((t) => { const d = fmtDate(t.date); return d >= rg.from && d <= rg.to; });
+  let inRange = [], rangeLabel = '', rangeSub = '', prevList = [], prevLabel = '';
+  if (basis === 'start') {
+    const years = projects.map((p) => (fmtDate(p.startDate) || '').slice(0, 4)).filter(Boolean)
+      .filter((v, i, a) => a.indexOf(v) === i).sort().reverse();
+    const cy = String(new Date().getFullYear());
+    const opts = [{ key: 'all', label: '全部年份' }].concat(years.map((y) => ({ key: y, label: y + '年' })));
+    if (!opts.some((o) => o.key === state.statsYear)) {
+      state.statsYear = years.indexOf(cy) >= 0 ? cy : (years[0] || 'all');
+    }
+    const yk = state.statsYear || 'all';
+    const pills = h('div', { class: 'pill-tabs' });
+    opts.forEach((o) => pills.appendChild(h('button', {
+      class: 'pill' + (o.key === yk ? ' on' : ''),
+      onclick: () => { state.statsYear = o.key; state.statsCat = 'all'; render(); }
+    }, o.label)));
+    wrap.appendChild(pills);
+    inRange = yk === 'all' ? txs.slice() : txs.filter((t) => startYearOf(t) === yk);
+    rangeLabel = yk === 'all' ? '全部年份' : yk + ' 年开工';
+    let np = 0; const seen = {};
+    inRange.forEach((t) => { if (t.projectId && !seen[t.projectId]) { seen[t.projectId] = 1; np++; } });
+    rangeSub = np + ' 个项目 · ' + inRange.length + ' 笔';
+    if (yk !== 'all') {
+      const py = String(Number(yk) - 1);
+      prevList = txs.filter((t) => startYearOf(t) === py);
+      prevLabel = py + ' 年开工项目';
+    }
+    wrap.appendChild(h('div', { class: 'basis-note' },
+      '年份以项目开工日确定：' + (yk === 'all' ? '全部项目' : yk + ' 年开工的项目')
+      + '的全部流水（含跨年收付款）都计入该年；未关联项目的流水按发生日期年份归属。'));
+  } else {
+    const ranges = timeRanges();
+    const rg = ranges.find((r) => r.key === state.statsRange) || ranges[4];
+    const pills = h('div', { class: 'pill-tabs' });
+    ranges.forEach((r) => pills.appendChild(h('button', {
+      class: 'pill' + (r.key === rg.key ? ' on' : ''),
+      onclick: () => { state.statsRange = r.key; state.statsCat = 'all'; render(); }
+    }, r.label)));
+    wrap.appendChild(pills);
+    inRange = txs.filter((t) => { const d = fmtDate(t.date); return d && d >= rg.from && d <= rg.to; });
+    rangeLabel = rg.label; rangeSub = rg.sub;
+    if (rg.key !== 'all') {
+      const len = daysDiff(rg.to, rg.from) + 1;
+      const pTo = isoAddDays(rg.from, -1), pFrom = isoAddDays(pTo, -(len - 1));
+      prevList = txs.filter((t) => { const d = fmtDate(t.date); return d && d >= pFrom && d <= pTo; });
+      const PREV_NAME = { day: '昨天', week: '上周', month: '上月', quarter: '上季度', year: '去年' };
+      prevLabel = PREV_NAME[rg.key] || ('上一个' + String(rg.label).replace(/^本/, ''));
+    }
+    wrap.appendChild(h('div', { class: 'basis-note' }, '按流水发生日期统计：只统计日期落在所选区间内的流水（跨年项目会被拆到不同年份）。'));
+  }
+
   let inc = 0, exp = 0;
-  inRange.forEach((t) => { if (isIncome(t)) inc += Number(t.amount) || 0; else if (isExpense(t)) exp += Number(t.amount) || 0; });
+  inRange.forEach((t) => { const a = Number(t.amount) || 0; if (isIncome(t)) inc += a; else if (isExpense(t)) exp += a; });
 
   const sumCard = h('div', { class: 'card sum-card' });
-  sumCard.appendChild(h('div', { class: 'sum-label' }, rg.label + ' · ' + rg.sub + ' · ' + inRange.length + ' 笔'));
+  sumCard.appendChild(h('div', { class: 'sum-label' }, rangeLabel + ' · ' + rangeSub));
   sumCard.appendChild(h('div', { class: 'sum-main' }, [h('span', { class: 'sum-k' }, '结余 '), h('span', { class: 'sum-v' }, M(inc - exp))]));
   sumCard.appendChild(h('div', { class: 'sum-sub' }, '收入 ' + M(inc) + ' ｜ 支出 ' + M(exp)));
   wrap.appendChild(sumCard);
 
-  // 月度走势（近6个月收支柱状 + 本月环比，红涨绿跌）
+  // ② 月度走势（折线 / 柱状两种形态，点任一点下钻到该月流水）
+  const trendForm = state.statsTrend || 'line';
   wrap.appendChild(h('h2', { class: 'section' }, '月度走势'));
-  wrap.appendChild(monthTrendCard(txs));
+  wrap.appendChild(h('div', { class: 'pill-tabs', style: 'margin-bottom:var(--g-sp-2)' }, [
+    h('button', { class: 'pill' + (trendForm === 'line' ? ' on' : ''), onclick: () => { state.statsTrend = 'line'; render(); } }, '折线'),
+    h('button', { class: 'pill' + (trendForm === 'bar' ? ' on' : ''), onclick: () => { state.statsTrend = 'bar'; render(); } }, '柱状')
+  ]));
+  wrap.appendChild(monthTrendCard(inRange, trendForm, rangeLabel));
 
-  // 维度拆解：按项目 / 支出分类 / 收入类型 / 按往来 / 按账户
+  // ③ 维度拆解：按项目 / 支出分类 / 收入类型 / 按往来 / 按账户（占比条 / 环形图 / 柱状图）
   wrap.appendChild(h('h2', { class: 'section' }, '维度拆解'));
   const DIMS = [
     { key: 'project', label: '按项目' }, { key: 'cat', label: '支出分类' },
@@ -2714,58 +3238,88 @@ async function statsView() {
   DIMS.forEach((d) => dimPills.appendChild(h('button', { class: 'pill' + (d.key === (state.statsDim || 'project') ? ' on' : ''), onclick: () => { state.statsDim = d.key; render(); } }, d.label)));
   wrap.appendChild(dimPills);
 
+  const FORMS = [{ key: 'bar', label: '占比条' }, { key: 'donut', label: '环形图' }, { key: 'column', label: '柱状图' }];
+  const form = state.statsForm || 'bar';
+  const formPills = h('div', { class: 'pill-tabs' });
+  FORMS.forEach((f) => formPills.appendChild(h('button', { class: 'pill' + (f.key === form ? ' on' : ''), onclick: () => { state.statsForm = f.key; render(); } }, f.label)));
+  wrap.appendChild(formPills);
+
   const dim = state.statsDim || 'project';
+  const dimLabel = (DIMS.find((d) => d.key === dim) || {}).label || '';
+  const keyOf = (t) => {
+    if (isTransfer(t)) return '';
+    if (dim === 'project') return t.projectId || 'none';
+    if (dim === 'cat') return isExpense(t) ? (t.category || '未分类') : '';
+    if (dim === 'subType') return isIncome(t) ? (t.subType || '其他') : '';
+    if (dim === 'party') return t.partyName ? (t.partyId || t.partyName) : '';
+    if (dim === 'account') return t.account || '';
+    return '';
+  };
+  const labelOf = (t) => {
+    if (dim === 'project') return pname(t.projectId);
+    if (dim === 'cat') return t.category || '未分类';
+    if (dim === 'subType') return t.subType || '其他';
+    if (dim === 'party') return t.partyName || '';
+    if (dim === 'account') return t.account || '';
+    return '';
+  };
   const map = {};
   inRange.forEach((t) => {
-    if (isTransfer(t)) return;
+    const key = keyOf(t); if (!key) return;
     const amt = Number(t.amount) || 0;
-    let key = '', label = '';
-    if (dim === 'project') { key = t.projectId || 'none'; label = pname(t.projectId); }
-    else if (dim === 'cat') { if (!isExpense(t)) return; key = t.category || '未分类'; label = (t.category || '未分类') + (t.subCat ? '＞' + t.subCat : ''); }
-    else if (dim === 'subType') { if (!isIncome(t)) return; key = t.subType || '其他'; label = t.subType || '其他'; }
-    else if (dim === 'party') { if (!t.partyName) return; key = t.partyId || t.partyName; label = t.partyName; }
-    else if (dim === 'account') { if (!t.account) return; key = t.account; label = t.account; }
-    if (!key) return;
-    if (!map[key]) map[key] = { key: key, label: label, income: 0, expense: 0, count: 0 };
+    if (!map[key]) map[key] = { key: key, label: labelOf(t), income: 0, expense: 0, count: 0 };
     const b = map[key];
     b.count++;
-    if (isIncome(t)) b.income += amt; else b.expense += amt;
+    if (isIncome(t)) b.income += amt; else if (isExpense(t)) b.expense += amt;
   });
   const rows = Object.keys(map).map((k) => map[k])
     .sort((a, b) => (b.income - b.expense) - (a.income - a.expense) || (b.income + b.expense) - (a.income + a.expense));
   const maxSum = Math.max.apply(null, [1].concat(rows.map((r) => r.income + r.expense)));
-  const drillRange = () => (ranges.some((r) => r.key === state.statsRange) ? state.statsRange : 'all');
+
+  // 下钻：直接锁定「当前口径内」的这组流水 id —— 比按日期区间回查更精确，跨年项目也不会串
+  const drillRow = (b) => {
+    if (dim === 'project' && b.key !== 'none') { location.hash = '#/project/' + b.key; return; }
+    const ids = [];
+    inRange.forEach((t) => { if (keyOf(t) === b.key) ids.push(t.id); });
+    statsDrill(rangeLabel + ' · ' + dimLabel + '：' + b.label, ids);
+  };
 
   if (!rows.length) {
-    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该时间范围内没有可拆解的记录'));
+    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该口径下没有可拆解的记录'));
+  } else if (form === 'donut') {
+    const ringExp = [], ringInc = [];
+    rows.forEach((b, i) => {
+      if (b.expense > 0) ringExp.push({ label: b.label, value: b.expense, text: M(b.expense), idx: i });
+      if (b.income > 0) ringInc.push({ label: b.label, value: b.income, text: M(b.income), idx: i });
+    });
+    const rings = [];
+    if (ringExp.length) rings.push({ name: '支出', thickness: 22, items: topNItems(ringExp, 6, M) });
+    if (ringInc.length) rings.push({ name: '收入', thickness: 16, items: topNItems(ringInc, 6, M) });
+    const card = h('div', { class: 'card' });
+    card.appendChild(donutChart({
+      rings: rings, size: 148, centerSmall: rings.length > 1,
+      centerValue: MK(inc - exp), centerKey: '结余',
+      onPick: (idx, it) => { const b = rows[it.idx]; if (b) drillRow(b); }
+    }));
+    card.appendChild(h('div', { class: 'chart-caption' },
+      '点击扇区或图例可下钻明细；' + (rows.length > 6 ? '环形图只画前 6 项，切「占比条」看全部 ' + rows.length + ' 项' : '共 ' + rows.length + ' 项')));
+    wrap.appendChild(card);
+  } else if (form === 'column') {
+    const top = rows.slice(0, 8);
+    wrap.appendChild(h('div', { class: 'card' }, [
+      groupedBars({
+        items: top.map((b) => ({ label: b.label, a: b.income, b: b.expense, aText: M(b.income), bText: M(b.expense) })),
+        aName: '收', bName: '支', h: 150, labelLen: 4,
+        onPick: (i) => drillRow(top[i])
+      }),
+      chartLegend([{ name: '收入', color: 'var(--income)' }, { name: '支出', color: 'var(--expense)' }]),
+      h('div', { class: 'chart-caption' }, rows.length > 8 ? '仅显示前 8 项，切「占比条」看全部 ' + rows.length + ' 项' : '点击柱体可下钻明细')
+    ]));
   } else {
     const card = h('div', { class: 'card' });
     rows.forEach((b) => {
-      let drill = null;
-      if (dim === 'project') {
-        drill = () => { const p = projects.find((x) => x.id === b.key); if (p) location.hash = '#/project/' + p.id; };
-      } else if (dim === 'cat') {
-        drill = () => {
-          state.ledgerRange = drillRange();
-          const cat = (b.label || '').split('＞')[0];
-          state.ledgerCat = cat === '未分类' ? 'all' : cat; state.ledgerSub = 'all';
-          location.hash = '#/ledger/' + state.ledgerRange;
-        };
-      } else if (dim === 'account') {
-        drill = () => {
-          state.ledgerRange = drillRange();
-          state.ledgerAccount = b.key; state.ledgerCat = 'all'; state.ledgerSub = 'all';
-          location.hash = '#/ledger/' + state.ledgerRange;
-        };
-      } else if (dim === 'party') {
-        drill = () => {
-          state.ledgerRange = drillRange();
-          state.ledgerQ = b.label; state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all';
-          location.hash = '#/ledger/' + state.ledgerRange;
-        };
-      }
       const pct = Math.max(4, Math.round((b.income + b.expense) / maxSum * 100));
-      card.appendChild(h('div', Object.assign({ class: 'tr-row' }, drill ? { onclick: drill } : {}), [
+      card.appendChild(h('div', { class: 'tr-row', onclick: () => drillRow(b) }, [
         h('div', { style: 'flex:1;min-width:0' }, [
           h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, b.label),
           h('div', { class: 'meta' }, b.count + ' 笔 · 占比 ' + Math.round((b.income + b.expense) / maxSum * 100) + '%'),
@@ -2776,11 +3330,15 @@ async function statsView() {
           b.expense ? h('div', { class: 'amt expense' }, '-' + M(b.expense)) : null,
           (b.income && b.expense) ? h('div', { class: 'meta' }, '净 ' + M(b.income - b.expense)) : null
         ]),
-        drill ? h('span', { class: 'chev' }, '›') : null
+        h('span', { class: 'chev' }, '›')
       ]));
     });
     wrap.appendChild(card);
   }
+
+  // ④ 支出品类分析（v2.4.0）：环形图 + 二级分类下钻 + 与上期对比
+  wrap.appendChild(h('h2', { class: 'section' }, '支出品类分析'));
+  wrap.appendChild(expCatCard(inRange, prevList, prevLabel, rangeLabel));
 
   // v2.1.0：项目经营汇总（期间收/支/毛利 + 毛利率 + 累计回款率）
   wrap.appendChild(h('h2', { class: 'section' }, '项目经营汇总'));
@@ -2796,8 +3354,18 @@ async function statsView() {
     return { p: pj, inc, exp, profit: inc - exp, count: its.filter((t) => !isTransfer(t)).length, rate: c > 0 ? Math.min(100, Math.round(totalInc / c * 100)) : 0, contract: c };
   }).filter((x) => x.count > 0).sort((a, b) => b.inc - a.inc);
   if (!perf.length) {
-    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该时间范围内没有项目收支'));
+    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该口径下没有项目收支'));
   } else {
+    // v2.4.0：项目收支对比柱状图（前 8 个），点柱体直接进项目详情
+    const topP = perf.slice(0, 8);
+    wrap.appendChild(h('div', { class: 'card' }, [
+      groupedBars({
+        items: topP.map((x) => ({ label: x.p.name || '未命名', a: x.inc, b: x.exp, aText: M(x.inc), bText: M(x.exp) })),
+        aName: '收', bName: '支', h: 150, labelLen: 4,
+        onPick: (i) => { location.hash = '#/project/' + topP[i].p.id; }
+      }),
+      chartLegend([{ name: '收入', color: 'var(--income)' }, { name: '支出', color: 'var(--expense)' }])
+    ]));
     const pcard = h('div', { class: 'card' });
     perf.slice(0, 20).forEach((x) => {
       const mg = x.inc > 0 ? (x.profit / x.inc * 100) : 0;
@@ -2818,11 +3386,11 @@ async function statsView() {
     wrap.appendChild(pcard);
   }
 
-  // 未开票收款清单（P3）：范围内 invoiceStatus ≠ 已开 的收入
+  // ⑤ 未开票收款清单：当前口径内 invoiceStatus ≠ 已开 的收入
   const uninv = inRange.filter((t) => isIncome(t) && t.invoiceStatus !== '已开');
   wrap.appendChild(h('h2', { class: 'section' }, '未开票收款（' + uninv.length + '）'));
   if (!uninv.length) {
-    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该时间范围内收到的款项均已开票 🎉'));
+    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该口径下收到的款项均已开票 🎉'));
   } else {
     let uninvSum = 0;
     uninv.forEach((t) => { uninvSum += Number(t.amount) || 0; });
@@ -2845,73 +3413,229 @@ async function statsView() {
     wrap.appendChild(ucard);
   }
 
-  // 导出：CSV 明细 / 长图分享
+  // ⑥ 导出：CSV 明细 / 长图分享（口径与年份写进文件名与图头，避免导出后被误读）
+  const catAgg = expCatAgg(inRange);
   const expRow = h('div', { style: 'display:flex;gap:8px;margin:2px 0 8px' }, [
-    h('button', { class: 'btn sm ghost', style: 'flex:1', onclick: () => exportStatsCsv(inRange, rg, pname) }, '⬇ 导出CSV'),
-    h('button', { class: 'btn sm ghost', style: 'flex:1', onclick: () => shareStatsImage({ rg: rg, inc: inc, exp: exp, dimLabel: (DIMS.find((d) => d.key === dim) || {}).label || '', rows: rows, uninv: uninv }) }, '🖼 长图分享')
+    h('button', {
+      class: 'btn sm ghost', style: 'flex:1',
+      onclick: () => exportStatsCsv(inRange, { label: rangeLabel, sub: rangeSub, basisLabel: (basis === 'start' ? '开工年口径' : '发生日期口径') }, pname)
+    }, '⬇ 导出CSV'),
+    h('button', {
+      class: 'btn sm ghost', style: 'flex:1',
+      onclick: () => shareStatsImage({
+        rg: { label: rangeLabel, sub: rangeSub }, basisLabel: (basis === 'start' ? '统计口径：项目开工年' : '统计口径：发生日期'),
+        inc: inc, exp: exp, dimLabel: dimLabel, rows: rows, uninv: uninv, cats: catAgg.rows, catTotal: catAgg.total
+      })
+    }, '🖼 长图分享')
   ]);
   wrap.appendChild(expRow);
 
   return wrap;
 }
 
-// 近6个月收支柱状 + 本月环比（红涨绿跌：涨红、跌绿）
-function monthTrendCard(txs) {
-  const now = new Date();
-  const months = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push({ key: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'), label: (d.getMonth() + 1) + '月', income: 0, expense: 0 });
-  }
-  txs.forEach((t) => {
-    const d = fmtDate(t.date); if (!d) return;
-    const m = months.find((x) => d.slice(0, 7) === x.key); if (!m) return;
-    const amt = Number(t.amount) || 0;
-    if (isIncome(t)) m.income += amt; else if (isExpense(t)) m.expense += amt;
+// v2.4.0：按一级分类聚合支出（品类分析卡与长图分享共用）
+function expCatAgg(list) {
+  const cmap = {};
+  list.forEach((t) => {
+    if (!isExpense(t)) return;
+    const c = t.category || '未分类';
+    cmap[c] = (cmap[c] || 0) + (Number(t.amount) || 0);
   });
-  const maxV = Math.max.apply(null, [1].concat(months.map((m) => Math.max(m.income, m.expense))));
+  const rows = Object.keys(cmap).map((k) => ({ label: k, value: cmap[k] })).sort((a, b) => b.value - a.value);
+  let total = 0; rows.forEach((x) => { total += x.value; });
+  return { rows: rows, total: total };
+}
+
+// 金额紧凑显示（图表中心/轴标签用，尊重「隐藏金额」开关）
+function MK(n) { return state.hideMoney ? '¥****' : '¥' + compactNum(n); }
+// 日期加减天数（返回 YYYY-MM-DD）
+function isoAddDays(iso, n) {
+  const d = new Date(String(iso).slice(0, 10) + 'T00:00:00');
+  if (isNaN(d.getTime())) return String(iso).slice(0, 10);
+  d.setDate(d.getDate() + Number(n || 0));
+  return ymd(d);
+}
+// 取前 n 项，其余并成「其他 x 项」，避免环形图碎片化
+function topNItems(list, n, fmt) {
+  if (list.length <= n) return list;
+  const head = list.slice(0, n);
+  let rest = 0;
+  list.slice(n).forEach((x) => { rest += Number(x.value) || 0; });
+  return head.concat([{
+    label: '其他 ' + (list.length - n) + ' 项', value: rest,
+    text: fmt ? fmt(rest) : ('¥' + compactNum(rest)), idx: -1
+  }]);
+}
+// 统计下钻：把「当前口径锁定的一组流水 id」交给流水页，比按区间回查精确
+function statsDrill(label, ids) {
+  state.ledgerDrill = { label: label, ids: ids || [] };
+  state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all';
+  state.ledgerProject = 'all'; state.ledgerQ = ''; state.ledgerRange = 'all';
+  location.hash = '#/ledger/all';
+}
+
+// 支出品类分析卡（v2.4.0）：环形图 + 一级/二级下钻 + 与上期对比
+function expCatCard(inRange, prevList, prevLabel, rangeLabel) {
+  const agg = expCatAgg(inRange);
   const card = h('div', { class: 'card' });
-  const rowEl = h('div', { class: 'trend-row' });
-  months.forEach((m) => {
-    // v1.9.0：点击某月下钻到流水页该月（自定义区间）
-    const col = h('div', {
-      class: 'trend-col', style: 'cursor:pointer', title: '查看 ' + m.key.slice(0, 4) + '年' + m.label + '流水',
-      onclick: () => {
-        state.ledgerRange = 'custom';
-        state.ledgerCustom = { label: m.key.slice(0, 4) + '年' + m.label, from: m.key + '-01', to: m.key + '-31' };
-        state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all'; state.ledgerQ = '';
-        location.hash = '#/ledger/custom';
+  if (!agg.rows.length) {
+    card.className = 'card';
+    card.appendChild(h('div', { style: 'text-align:center;color:var(--text-dim);padding:18px' }, '该口径下没有支出记录'));
+    return card;
+  }
+  const selCat = state.statsCat || 'all';
+  // 环形图：支出品类占比（点品类 → 下钻子类）
+  card.appendChild(donutChart({
+    items: topNItems(agg.rows.map((x, i) => ({ label: x.label, value: x.value, text: M(x.value), idx: i })), 7, M),
+    size: 148, thickness: 26,
+    centerValue: MK(agg.total), centerKey: '支出合计',
+    onPick: (idx, it) => { state.statsCat = (state.statsCat === it.label) ? 'all' : it.label; render(); }
+  }));
+
+  // 与上期对比（支出涨红跌绿）
+  if (prevList && prevList.length) {
+    const pAgg = expCatAgg(prevList);
+    const d = pAgg.total > 0 ? Math.round((agg.total - pAgg.total) / pAgg.total * 100) : (agg.total > 0 ? 100 : 0);
+    const chips = h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:10px;border-top:1px solid var(--border);padding-top:8px' });
+    chips.appendChild(h('span', { class: 'delta-chip' }, [
+      '对比' + prevLabel + ' 总支出 ',
+      h('span', { class: 'd ' + (d > 0 ? 'delta-up' : d < 0 ? 'delta-down' : '') }, (d > 0 ? '↑' : d < 0 ? '↓' : '→') + (d === 0 ? '持平' : Math.abs(d) + '%'))
+    ]));
+    const pmap = {}; pAgg.rows.forEach((x) => { pmap[x.label] = x.value; });
+    agg.rows.slice(0, 4).forEach((x) => {
+      const pv = pmap[x.label];
+      if (!pv) return;
+      const dd = Math.round((x.value - pv) / pv * 100);
+      if (!dd) return;
+      chips.appendChild(h('span', { class: 'delta-chip' }, [
+        x.label + ' ',
+        h('span', { class: 'd ' + (dd > 0 ? 'delta-up' : 'delta-down') }, (dd > 0 ? '↑' : '↓') + Math.abs(dd) + '%')
+      ]));
+    });
+    card.appendChild(chips);
+  }
+
+  // 一级 / 二级分类排行（可点）
+  const subWrap = h('div', { style: 'margin-top:12px;border-top:1px solid var(--border);padding-top:10px' });
+  if (selCat !== 'all') {
+    const smap = {};
+    inRange.forEach((t) => {
+      if (!isExpense(t)) return;
+      if ((t.category || '未分类') !== selCat) return;
+      const s = t.subCat || '未分子类';
+      smap[s] = (smap[s] || 0) + (Number(t.amount) || 0);
+    });
+    const subRows = Object.keys(smap).map((k) => ({ label: k, value: smap[k] })).sort((a, b) => b.value - a.value);
+    subWrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:8px' }, [
+      h('span', { style: 'font-weight:700;font-size:var(--g-fs-ctl)' }, selCat + ' · 子类构成'),
+      h('button', { class: 'btn sm ghost', onclick: (e) => { e.stopPropagation(); state.statsCat = 'all'; render(); } }, '← 全部品类')
+    ]));
+    subWrap.appendChild(rankBars(subRows.map((x) => ({
+      label: x.label, value: x.value, text: M(x.value),
+      onPick: () => {
+        const ids = [];
+        inRange.forEach((t) => { if (isExpense(t) && (t.category || '未分类') === selCat && (t.subCat || '未分子类') === x.label) ids.push(t.id); });
+        statsDrill(rangeLabel + ' · 支出 ' + selCat + '＞' + x.label, ids);
       }
-    }, [
-      h('div', { class: 'trend-bars', title: '收 ' + M(m.income) + ' / 支 ' + M(m.expense) }, [
-        h('div', { class: 'trend-bar in', style: 'height:' + Math.max(3, Math.round(m.income / maxV * 88)) + 'px' }),
-        h('div', { class: 'trend-bar out', style: 'height:' + Math.max(3, Math.round(m.expense / maxV * 88)) + 'px' })
-      ]),
-      h('div', { class: 'trend-l' }, m.label)
-    ]);
-    rowEl.appendChild(col);
+    })), { color: 'var(--expense)' }));
+    subWrap.appendChild(h('div', { class: 'chart-caption' }, '点子类可看该子类全部流水'));
+  } else {
+    subWrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:8px' }, [
+      h('span', { style: 'font-weight:700;font-size:var(--g-fs-ctl)' }, '品类排行'),
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '点品类看子类构成')
+    ]));
+    subWrap.appendChild(rankBars(agg.rows.map((x) => ({
+      label: x.label, value: x.value, text: M(x.value) + ' · ' + pctText(x.value, agg.total),
+      onPick: () => { state.statsCat = x.label; render(); }
+    })), { color: 'var(--expense)' }));
+  }
+  card.appendChild(subWrap);
+  return card;
+}
+
+// 月度走势（v2.4.0）：折线 / 柱状两种形态 + 环比（红涨绿跌）
+// 月份取自「当前口径内流水实际发生的月份」（最多 12 个），不再固定为近 6 个自然月，
+// 这样在「项目开工年」口径下跨年项目的流水也能完整呈现。
+function monthTrendCard(list, form, rangeLabel) {
+  const map = {};
+  (list || []).forEach((t) => {
+    if (isTransfer(t)) return;
+    const d = fmtDate(t.date); if (!d) return;
+    const k = d.slice(0, 7);
+    if (!map[k]) map[k] = { key: k, income: 0, expense: 0 };
+    const amt = Number(t.amount) || 0;
+    if (isIncome(t)) map[k].income += amt; else if (isExpense(t)) map[k].expense += amt;
   });
-  card.appendChild(rowEl);
-  card.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:8px' }, '▮ 收入　▮ 支出（近6个月，点击月份可看该月流水）'));
-  // 环比：本月 vs 上月
-  const cur = months[5], prev = months[4];
-  const delta = (a, b) => (b > 0 ? Math.round((a - b) / b * 100) : (a > 0 ? 100 : 0));
-  const dInc = delta(cur.income, prev.income), dExp = delta(cur.expense, prev.expense), dNet = delta(cur.income - cur.expense, prev.income - prev.expense);
-  const fmtD = (v) => (v > 0 ? '↑' : v < 0 ? '↓' : '→') + (v === 0 ? '持平' : Math.abs(v) + '%');
-  const colOf = (v) => v > 0 ? 'var(--danger)' : v < 0 ? 'var(--income)' : 'var(--text-dim)';
-  const chipLine = (label, v) => h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, [
-    label + ' ',
-    h('span', { style: 'font-weight:700;color:' + colOf(v) }, fmtD(v))
-  ]);
-  card.appendChild(h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;border-top:1px solid var(--border);padding-top:8px' }, [
-    chipLine('收入环比', dInc), chipLine('支出环比', dExp), chipLine('结余环比', dNet)
+  let keys = Object.keys(map).sort();
+  const card = h('div', { class: 'card' });
+  if (!keys.length) {
+    card.appendChild(h('div', { class: 'chart-empty' }, '该口径下没有收支记录'));
+    return card;
+  }
+  if (keys.length > 12) keys = keys.slice(keys.length - 12);
+  const months = keys.map((k) => map[k]);
+  const labels = months.map((m, i) => {
+    const mo = String(Number(m.key.slice(5, 7)));
+    if (i === 0 || m.key.slice(0, 4) !== months[i - 1].key.slice(0, 4)) return m.key.slice(2, 4) + '/' + mo;
+    return mo;
+  });
+  // 下钻：锁定该月在当前口径内的那组流水 id
+  const drillMonth = (i) => {
+    const m = months[i];
+    const ids = [];
+    (list || []).forEach((t) => { if ((fmtDate(t.date) || '').slice(0, 7) === m.key) ids.push(t.id); });
+    statsDrill((rangeLabel || '') + ' · ' + m.key.slice(0, 4) + '年' + Number(m.key.slice(5, 7)) + '月', ids);
+  };
+
+  if (form === 'bar') {
+    card.appendChild(groupedBars({
+      items: months.map((m) => ({
+        label: Number(m.key.slice(5, 7)) + '月', a: m.income, b: m.expense,
+        aText: M(m.income), bText: M(m.expense)
+      })),
+      aName: '收', bName: '支', h: 150, labelLen: 4, onPick: (i) => drillMonth(i)
+    }));
+  } else {
+    card.appendChild(lineChart({
+      labels: labels, h: 140,
+      series: [
+        { name: '收入', color: 'var(--income)', area: true, data: months.map((m) => m.income) },
+        { name: '支出', color: 'var(--expense)', data: months.map((m) => m.expense) },
+        { name: '结余', color: 'var(--accent)', dash: true, data: months.map((m) => m.income - m.expense) }
+      ],
+      onPick: (i) => drillMonth(i)
+    }));
+  }
+  card.appendChild(chartLegend([
+    { name: '收入', color: 'var(--income)' },
+    { name: '支出', color: 'var(--expense)' },
+    { name: '结余', color: 'var(--accent)' }
   ]));
+
+  // 环比：最近一个有数据的月 vs 前一月
+  if (months.length >= 2) {
+    const cur = months[months.length - 1], prev = months[months.length - 2];
+    const delta = (a, b) => (b > 0 ? Math.round((a - b) / b * 100) : (a > 0 ? 100 : 0));
+    const dInc = delta(cur.income, prev.income), dExp = delta(cur.expense, prev.expense);
+    const dNet = delta(cur.income - cur.expense, prev.income - prev.expense);
+    const fmtD = (v) => (v > 0 ? '↑' : v < 0 ? '↓' : '→') + (v === 0 ? '持平' : Math.abs(v) + '%');
+    const clsOf = (v) => v > 0 ? 'delta-up' : v < 0 ? 'delta-down' : '';
+    const chipLine = (label, v) => h('span', { class: 'delta-chip' }, [
+      label + ' ',
+      h('span', { class: 'd ' + clsOf(v) }, fmtD(v))
+    ]);
+    card.appendChild(h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;border-top:1px solid var(--border);padding-top:8px' }, [
+      chipLine('收入环比', dInc), chipLine('支出环比', dExp), chipLine('结余环比', dNet)
+    ]));
+  }
+  card.appendChild(h('div', { class: 'chart-caption' }, '共 ' + months.length + ' 个月，点击图上任一点可看该月流水'));
   return card;
 }
 
 // 统计明细导出 CSV（带 BOM，Excel 打开中文不乱码）
+// v2.4.0：rg = {label, sub, basisLabel}，口径写进文件名，避免导出后混淆年份归属
 function exportStatsCsv(rows, rg, pname) {
-  if (!rows.length) { toast('该时间范围没有可导出的记录'); return; }
+  if (!rows.length) { toast('该口径下没有可导出的记录'); return; }
   const esc = (v) => { v = v == null ? '' : String(v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const typeOf = (t) => isTransfer(t) ? '转账' : (isIncome(t) ? '收入' : '支出');
   const lines = [['日期', '类型', '项目', '分类/收入类型', '子类', '往来单位', '账户', '金额', '开票状态', '备注'].join(',')];
@@ -2929,21 +3653,32 @@ function exportStatsCsv(rows, rg, pname) {
   const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = '统计_' + rg.label + '_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.download = '统计_' + (rg.basisLabel || '统计') + '_' + rg.label + '_' + new Date().toISOString().slice(0, 10) + '.csv';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast('已导出 ' + rows.length + ' 笔 CSV');
 }
 
-// 统计长图：canvas 绘制汇总 + 维度拆解 + 未开票合计，支持系统分享则分享，否则下载 PNG
+// 统计长图：canvas 绘制 汇总 + 品类环形图 + 维度拆解 + 未开票合计；支持系统分享则分享，否则下载 PNG
 function shareStatsImage(d) {
   try {
     const W = 750, PAD = 44, rowH = 96;
     const rows = d.rows.slice(0, 8);
-    let H = PAD + 122 + 186 + 34 + rows.length * rowH + 110 + (d.uninv.length ? 100 : 0);
+    const catsAll = (d.cats || []).filter((c) => (Number(c.value) || 0) > 0);
+    const cats = catsAll.slice(0, 7);
+    let restV = 0;
+    catsAll.slice(7).forEach((c) => { restV += Number(c.value) || 0; });
+    if (restV > 0) cats.push({ label: '其他 ' + (catsAll.length - 7) + ' 项', value: restV });
+    const catBlock = cats.length ? (24 + 40 + Math.max(192, 30 + cats.length * 40) + 20) : 0;
+    const headH = 66 + 40 + (d.basisLabel ? 46 : 16);
+    let H = PAD + headH + 186 + 34 + rows.length * rowH + catBlock + 110 + (d.uninv.length ? 100 : 0);
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const ctx = cv.getContext('2d');
     const dark = document.documentElement.dataset.theme !== 'light';
+    // v2.4.0：环形图配色直接读语义层 Token，保证长图与页面图表同色
+    const csRoot = getComputedStyle(document.documentElement);
+    const PAL = [];
+    for (let i = 1; i <= 8; i++) PAL.push((csRoot.getPropertyValue('--chart-' + i) || '').trim() || '#8a8a8a');
     const C = dark
       ? { bg: '#0f1411', card: '#18211c', text: '#e8efe9', dim: '#9bb0a4', inc: '#4caf78', exp: '#e0835a', accent: '#ffce54', border: '#2a372f', danger: '#e0654f' }
       : { bg: '#f3f6f3', card: '#ffffff', text: '#1d2420', dim: '#66756b', inc: '#1a8f4e', exp: '#b85c2e', accent: '#a9700e', border: '#d9e0da', danger: '#cc4b37' };
@@ -2952,7 +3687,11 @@ function shareStatsImage(d) {
     ctx.fillStyle = C.text; ctx.font = '700 40px sans-serif';
     ctx.fillText('装修记账 · 统计报表', PAD, y + 40); y += 66;
     ctx.fillStyle = C.dim; ctx.font = '26px sans-serif';
-    ctx.fillText((d.rg.label || '') + ' · ' + (d.rg.sub || ''), PAD, y); y += 56;
+    ctx.fillText((d.rg.label || '') + ' · ' + (d.rg.sub || ''), PAD, y); y += 40;
+    if (d.basisLabel) {
+      ctx.fillStyle = C.accent; ctx.font = '600 24px sans-serif';
+      ctx.fillText(d.basisLabel, PAD, y); y += 46;
+    } else { y += 16; }
     // 汇总卡
     ctx.fillStyle = C.card;
     roundRect(ctx, PAD, y, W - PAD * 2, 150, 20); ctx.fill();
@@ -2986,6 +3725,45 @@ function shareStatsImage(d) {
       if (r.income) { const s = '+' + fmtMoney(r.income); ctx.fillStyle = C.inc; x -= ctx.measureText(s).width; ctx.fillText(s, x, y + 88); }
       y += rowH;
     });
+    // v2.4.0：支出品类构成（canvas 环形图 + 图例）
+    if (cats.length) {
+      let ct2 = Number(d.catTotal) || 0;
+      if (!ct2) cats.forEach((c) => { ct2 += Number(c.value) || 0; });
+      y += 24;
+      ctx.fillStyle = C.text; ctx.font = '700 30px sans-serif';
+      ctx.fillText('支出品类构成', PAD, y); y += 40;
+      const dcx = PAD + 104, dcy = y + 96, dr = 84, dth = 30;
+      let a0 = -Math.PI / 2;
+      cats.forEach((c, i) => {
+        const frac = ct2 > 0 ? (Number(c.value) || 0) / ct2 : 0;
+        if (frac <= 0) return;
+        const a1 = a0 + frac * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(dcx, dcy, dr, Math.min(a0, a1), Math.max(a0, a1));
+        ctx.lineWidth = dth; ctx.strokeStyle = PAL[i % PAL.length]; ctx.stroke();
+        a0 = a1;
+      });
+      ctx.lineWidth = 1;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = C.dim; ctx.font = '600 24px sans-serif';
+      ctx.fillText('支出合计', dcx, dcy - 8);
+      ctx.fillStyle = C.text; ctx.font = '800 28px sans-serif';
+      ctx.fillText(fmtMoney(ct2), dcx, dcy + 26);
+      ctx.textAlign = 'left';
+      cats.forEach((c, i) => {
+        const ly = y + 16 + i * 40;
+        ctx.fillStyle = PAL[i % PAL.length];
+        roundRect(ctx, PAD + 226, ly, 20, 20, 5); ctx.fill();
+        ctx.fillStyle = C.text; ctx.font = '26px sans-serif';
+        ctx.fillText(truncStr(c.label, 7), PAD + 258, ly + 18);
+        ctx.fillStyle = C.dim; ctx.font = '24px sans-serif';
+        ctx.fillText((ct2 > 0 ? Math.round((Number(c.value) || 0) / ct2 * 100) : 0) + '%', PAD + 470, ly + 18);
+        const sv = fmtMoney(c.value);
+        ctx.fillStyle = C.text; ctx.font = '600 24px sans-serif';
+        ctx.fillText(sv, W - PAD - ctx.measureText(sv).width, ly + 18);
+      });
+      y += Math.max(192, 30 + cats.length * 40) + 20;
+    }
     if (d.uninv.length) {
       let us = 0; d.uninv.forEach((t) => { us += Number(t.amount) || 0; });
       y += 20;
