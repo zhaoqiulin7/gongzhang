@@ -1886,6 +1886,55 @@ function partyStatement(p, allTxs, allProjects) {
       ]));
     });
   }
+  // 账单凭证：上传送货单/收据/对账单（图片或 PDF），便于日后核对付款金额
+  const bills = p.bills || [];
+  body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '账单凭证（' + bills.length + '）'));
+  if (!bills.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '暂无账单。可拍照或上传送货单、收据、对账单（图片/PDF），与流水核对付款金额'));
+  bills.forEach((b) => {
+    body.appendChild(h('div', { class: 'tx' }, [
+      h('div', {}, [
+        h('div', { style: 'font-size:13px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, b.name || '未命名账单'),
+        h('div', { class: 'meta' }, fmtDate(new Date(b.at || Date.now()).toISOString().slice(0, 10)) + ' · ' + Math.max(1, Math.round((Number(b.size) || 0) / 1024)) + 'KB' + (String(b.type || b.name || '').indexOf('pdf') >= 0 ? ' · PDF' : ''))
+      ]),
+      h('div', { style: 'display:flex;gap:6px;align-items:center' }, [
+        h('button', { class: 'btn sm ghost', onclick: () => viewBill(b, () => partyStatement(p, allTxs, allProjects)) }, '查看'),
+        h('button', { class: 'delete-x', title: '删除', onclick: () => confirmDialog('删除该账单凭证？（不影响流水记录）', () => {
+          Attachments.remove(b.attId);
+          p.bills = (p.bills || []).filter((x) => x.id !== b.id);
+          Parties.save(p).then(() => { toast('已删除账单'); partyStatement(p, allTxs, allProjects); });
+        }, '删除') }, '×')
+      ])
+    ]));
+  });
+  if (bills.length < 9) {
+    const mkInput = (accept, capture) => {
+      const inp = h('input', { type: 'file', accept, style: 'display:none' });
+      if (capture) inp.setAttribute('capture', 'environment');
+      inp.addEventListener('change', () => {
+        const file = inp.files && inp.files[0];
+        inp.value = '';
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) { toast('文件过大（限 10MB）'); return; }
+        toast('正在保存账单…');
+        Attachments.save(file, file.type).then((attId) => {
+          p.bills = p.bills || [];
+          p.bills.push({ id: uid(), attId, name: file.name || '账单照片', size: file.size, type: file.type || '', at: Date.now() });
+          return Parties.save(p);
+        }).then(() => { toast('账单已保存'); partyStatement(p, allTxs, allProjects); });
+      });
+      return inp;
+    };
+    const camInp = mkInput('image/*', true);
+    const fileInp = mkInput('image/*,application/pdf,.pdf', false);
+    body.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px' }, [
+      camInp, fileInp,
+      h('button', { class: 'btn sm primary', onclick: () => camInp.click() }, '📷 拍照上传'),
+      h('button', { class: 'btn sm ghost', onclick: () => fileInp.click() }, '📎 选择文件')
+    ]));
+  } else {
+    body.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' }, '账单已达 9 张上限，请先删除部分再上传'));
+  }
+
   body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '流水明细（' + rel.length + ' 笔）'));
   if (!rel.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '该单位暂无流水'));
   rel.forEach((t) => {
@@ -1909,6 +1958,26 @@ function partyStatement(p, allTxs, allProjects) {
     } }, '✅ 对账完成，标记已对账'));
   }
   openModal('往来对账单', body, acts);
+}
+
+// 查看账单凭证：图片弹窗预览，PDF 内嵌预览；关闭后重开对账单（reopen）
+async function viewBill(b, reopen) {
+  const a = await Attachments.get(b.attId);
+  if (!a) { toast('账单文件已丢失（可能被清理）'); if (reopen) reopen(); return; }
+  const url = URL.createObjectURL(a.blob);
+  const close = () => { closeModal(); if (reopen) reopen(); };
+  const isPdf = String(a.type || b.type || '').indexOf('pdf') >= 0 || /\.pdf$/i.test(b.name || '');
+  if (isPdf) {
+    const openLink = h('a', { href: url, target: '_blank', rel: 'noopener', style: 'display:block;margin-top:8px;text-align:center;font-size:13px;color:var(--accent)' }, '在新窗口打开 PDF ▸');
+    openModal('账单预览', h('div', {}, [
+      h('iframe', { src: url, style: 'width:100%;height:58vh;border:none;border-radius:8px;background:#fff' }),
+      openLink
+    ]), [h('button', { class: 'btn ghost', onclick: close }, '↩ 返回对账单')]);
+  } else {
+    openModal('账单预览', h('div', { style: 'text-align:center' }, [
+      h('img', { src: url, style: 'max-width:100%;max-height:60vh;border-radius:8px' })
+    ]), [h('button', { class: 'btn ghost', onclick: close }, '↩ 返回对账单')]);
+  }
 }
 
 // ---------- 设置 ----------
