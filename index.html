@@ -816,6 +816,73 @@ const DEFAULT_CAT_TREE = [
   { name: '其他', subs: ['其他'] }
 ];
 
+// ---------- 进度计划模板（内置，源自《进度计划参考.xls》，可在设置中修改） ----------
+// 每项 {name:阶段名, days:工期天数}；工装类型不预设工期（按实际填写）
+const PLAN_TYPES = [
+  { id: 'villa', label: '别墅' }, { id: 'flat', label: '平层' },
+  { id: 'duplex', label: '跃层' }, { id: 'fitup', label: '工装' }
+];
+const PLAN_TPL_BUILTIN = {
+  villa: [
+    { name: '开工仪式', days: 1 }, { name: '原装修、土建墙体拆除', days: 7 }, { name: '土建现浇结构施工', days: 30 },
+    { name: '现浇结构养护期', days: 15 }, { name: '土建墙体砌筑', days: 6 }, { name: '进场拆除及砌筑墙体、墙体抹灰', days: 12 },
+    { name: '水电开槽', days: 5 }, { name: '水电排管穿线', days: 10 }, { name: '配电箱+空开箱+空开安装', days: 3 },
+    { name: '铝合金封窗量尺+下单', days: 2 }, { name: '全屋窗洞铝合金封窗', days: 7 }, { name: '屋面露台SBS防水卷材+非固化沥青', days: 5 },
+    { name: '露台硬化(C20细石混凝土找坡)', days: 3 }, { name: '露台铺装花岗岩/室外防滑瓷砖', days: 6 }, { name: '屋面露台阳光房+雨棚', days: 10 },
+    { name: '四层洗衣房雨棚', days: 3 }, { name: '负一层/负二层新风系统安装(预埋管道)', days: 5 }, { name: '瓷砖下单', days: 1 },
+    { name: '木门量尺+下单', days: 2 }, { name: '全屋定制柜量尺+下单', days: 2 }, { name: '电梯量尺+选型下单', days: 2 },
+    { name: '地暖铺装', days: 12 }, { name: '地面豆石回填找平', days: 5 }, { name: '卫生间防水', days: 3 },
+    { name: '卫生间墙地面瓷砖铺贴', days: 15 }, { name: '卫生间铝合金推拉门、入户重型门量尺+下单', days: 2 }, { name: '卫浴下单', days: 2 },
+    { name: '门槛石安装', days: 4 }, { name: '窗台石安装', days: 4 }, { name: '全屋地面瓷砖铺贴', days: 20 },
+    { name: '楼梯地面石材铺贴', days: 10 }, { name: '楼梯不锈钢玻璃扶手量尺+下单', days: 2 }, { name: '轻钢龙骨石膏板造型吊顶', days: 15 },
+    { name: '墙顶面石膏腻子披挂(第一遍)', days: 15 }, { name: '墙顶面石膏腻子披挂(第二遍+打磨)', days: 15 }, { name: '墙顶面乳胶漆滚涂', days: 8 },
+    { name: '开荒保洁', days: 3 }, { name: '开关插座灯具（含智能化）下单', days: 1 }, { name: '窗帘下单', days: 1 },
+    { name: '开关插座灯具（含智能化）安装', days: 5 }, { name: '卫生间厨房铝扣板吊顶', days: 4 }, { name: '木门、木质哑口套安装', days: 4 },
+    { name: '卫生间铝合金推拉门、入户重型门安装', days: 5 }, { name: '全屋定制柜安装', days: 15 }, { name: '楼梯不锈钢玻璃扶手安装', days: 5 },
+    { name: '卫生间卫浴安装', days: 3 }, { name: '车库地坪漆', days: 5 }, { name: '电梯安装', days: 7 },
+    { name: '锅炉安装', days: 3 }, { name: '美缝+填缝', days: 5 }, { name: '竣工保洁', days: 3 },
+    { name: '软装窗帘进场安装', days: 3 }
+  ],
+  flat: [
+    { name: '开工仪式', days: 1 }, { name: '原装修、土建墙体拆除', days: 3 }, { name: '土建墙体砌筑', days: 6 },
+    { name: '水电排管穿线', days: 12 }, { name: '铝合金封窗量尺+定方案', days: 2 }, { name: '暖气片管道铺装', days: 2 },
+    { name: '卫生间沉箱防水+闭水试验', days: 5 }, { name: '卫生间沉箱回填及找平', days: 2 }, { name: '卫生间二次防水+闭水试验', days: 5 },
+    { name: '厨房烟道包覆及包立管', days: 3 }, { name: '瓷砖下单', days: 1 }, { name: '木门、铝合金门量尺+下单', days: 2 },
+    { name: '全屋窗户量尺+下单', days: 1 }, { name: '楼梯踏步欧松板基层及扶手砌筑', days: 3 }, { name: '全屋地面瓷砖铺贴', days: 15 },
+    { name: '卫生间墙地面瓷砖铺贴', days: 12 }, { name: '窗台石安装', days: 1 }, { name: '楼梯地面瓷砖铺贴', days: 5 },
+    { name: '美缝+填缝', days: 3 }, { name: '轻钢龙骨石膏板造型吊顶', days: 8 }, { name: '墙面隔音及欧松板基层', days: 8 },
+    { name: '全屋定制柜量尺+下单', days: 2 }, { name: '墙固（界面剂）', days: 1 }, { name: '墙顶面石膏腻子披挂(第一遍)', days: 3 },
+    { name: '墙顶面石膏腻子披挂(第二遍+打磨)', days: 5 }, { name: '墙顶面乳胶漆滚涂', days: 2 }, { name: '窗帘下单', days: 1 },
+    { name: '开关插座灯具（含智能化）安装', days: 5 }, { name: '卫生间厨房铝扣板吊顶', days: 1 }, { name: '木门、木质哑口套、铝合金门安装', days: 3 },
+    { name: '全屋定制柜安装', days: 12 }, { name: '卫生间卫浴安装', days: 3 }, { name: '锅炉+暖气片安装（可入住前再安装）', days: 2 },
+    { name: '竣工保洁', days: 1 }, { name: '软装窗帘进场安装', days: 3 }
+  ],
+  duplex: [
+    { name: '开工仪式', days: 1 }, { name: '原装修、土建墙体拆除', days: 3 }, { name: '土建现浇结构施工', days: 15 },
+    { name: '现浇结构养护期', days: 15 }, { name: '土建墙体砌筑', days: 6 }, { name: '水电排管穿线', days: 12 },
+    { name: '铝合金封窗量尺+定方案', days: 2 }, { name: '暖气片管道铺装', days: 2 }, { name: '卫生间沉箱防水+闭水试验', days: 5 },
+    { name: '卫生间沉箱回填及找平', days: 2 }, { name: '卫生间二次防水+闭水试验', days: 5 }, { name: '厨房烟道包覆及包立管', days: 3 },
+    { name: '瓷砖下单', days: 1 }, { name: '木门、铝合金门量尺+下单', days: 2 }, { name: '全屋窗户量尺+下单', days: 1 },
+    { name: '楼梯踏步欧松板基层及扶手砌筑', days: 3 }, { name: '全屋地面瓷砖铺贴', days: 15 }, { name: '卫生间墙地面瓷砖铺贴', days: 12 },
+    { name: '窗台石安装', days: 1 }, { name: '楼梯地面瓷砖铺贴', days: 5 }, { name: '美缝+填缝', days: 3 },
+    { name: '轻钢龙骨石膏板造型吊顶', days: 8 }, { name: '墙面隔音及欧松板基层', days: 8 }, { name: '全屋定制柜量尺+下单', days: 2 },
+    { name: '墙固（界面剂）', days: 1 }, { name: '墙顶面石膏腻子披挂(第一遍)', days: 3 }, { name: '墙顶面石膏腻子披挂(第二遍+打磨)', days: 5 },
+    { name: '墙顶面乳胶漆滚涂', days: 2 }, { name: '窗帘下单', days: 1 }, { name: '开关插座灯具（含智能化）安装', days: 5 },
+    { name: '卫生间厨房铝扣板吊顶', days: 1 }, { name: '木门、木质哑口套、铝合金门安装', days: 3 }, { name: '全屋定制柜安装', days: 12 },
+    { name: '卫生间卫浴安装', days: 3 }, { name: '锅炉+暖气片安装（可入住前再安装）', days: 2 }, { name: '竣工保洁', days: 1 },
+    { name: '软装窗帘进场安装', days: 3 }
+  ]
+};
+// 读取进度模板（首次使用时把内置模板写入 meta；工装=默认施工阶段模板，工期留空）
+async function getPlanTemplates() {
+  let t = await Meta.get('planTemplates', null);
+  if (!t || !t.villa) {
+    t = JSON.parse(JSON.stringify(PLAN_TPL_BUILTIN));
+    await Meta.set('planTemplates', t);
+  }
+  return t;
+}
+
 // ---------- 账户 / 分类树 / 模板（存 meta，兼容旧数据） ----------
 async function getAccounts() {
   let list = await Meta.get('accounts', null);
@@ -1622,12 +1689,20 @@ async function projectDetailView(id) {
       cb.checked = !!s.done;
       cb.disabled = locked;
       cb.addEventListener('change', () => { s.done = cb.checked; if (s.done && !s.date) s.date = today(); Projects.save(p).then(render); });
+      // 工期 + 实际完成复核（实际完成日 vs 预计结束日）
+      let reviewTxt = '';
+      if (!s.done && s.planStart && s.planEnd && daysDiff(s.planEnd, s.planStart) >= 0) {
+        reviewTxt = ' · 工期 ' + (daysDiff(s.planEnd, s.planStart) + 1) + ' 天';
+      } else if (s.done && s.date && s.planEnd) {
+        const dv = daysDiff(s.date, s.planEnd);
+        reviewTxt = dv === 0 ? ' · 按期完成' : (dv > 0 ? ' · 比计划晚 ' + dv + ' 天' : ' · 比计划早 ' + (-dv) + ' 天');
+      }
       const nameWrap = h('div', { style: 'flex:1;min-width:0' }, [
         h('div', { style: 'font-weight:600;font-size:13px' }, [
           document.createTextNode(s.name || '未命名阶段'),
           warn ? h('span', { class: 'tag ' + warn.cls, style: 'margin-left:6px' }, warn.text) : null
         ]),
-        h('div', { class: 'meta', style: s.done ? 'color:var(--income)' : '' }, s.done ? '已完成' : '未完成')
+        h('div', { class: 'meta', style: s.done ? 'color:var(--income)' : '' }, (s.done ? '已完成' : '未完成') + reviewTxt)
       ]);
       const del = locked ? null : h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×');
       row.appendChild(cb); row.appendChild(nameWrap);
@@ -2123,6 +2198,62 @@ async function settingsView() {
   });
   wrap.appendChild(stageTplCard);
 
+  // 进度计划模板（按装修类型：别墅/平层/跃层/工装，源自内置参考表，可改）
+  const planTplCard = h('div', { class: 'card' });
+  planTplCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '进度计划模板（按装修类型维护；项目里按开工日期自动排期）'));
+  const ptTypeSel = h('select', {}, PLAN_TYPES.map((t) => h('option', { value: t.id }, t.label + '进度模板')));
+  planTplCard.appendChild(h('div', { class: 'field', style: 'margin-top:8px' }, [ptTypeSel]));
+  const ptHint = h('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' }, '');
+  planTplCard.appendChild(ptHint);
+  const ptList = h('div', { style: 'margin-top:8px' });
+  planTplCard.appendChild(ptList);
+  const tpls = await getPlanTemplates();
+  let ptType = 'villa';
+  let ptCur = tpls.villa.slice();
+  function renderPt() {
+    ptList.innerHTML = '';
+    ptHint.textContent = ptType === 'fitup'
+      ? '工装按实际填写：工期默认留空、不强制预设；阶段名称与「默认施工阶段模板」共用，可自行编辑。'
+      : '每阶段工期（天）为默认固定进度，载入项目时按开工日期自动推算各阶段起止时间。';
+    ptCur.forEach((it, i) => {
+      const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+      const up = h('button', { class: 'btn sm ghost', title: '上移', onclick: () => { if (i > 0) { const t = ptCur[i]; ptCur[i] = ptCur[i - 1]; ptCur[i - 1] = t; renderPt(); } } }, '↑');
+      const down = h('button', { class: 'btn sm ghost', title: '下移', onclick: () => { if (i < ptCur.length - 1) { const t = ptCur[i]; ptCur[i] = ptCur[i + 1]; ptCur[i + 1] = t; renderPt(); } } }, '↓');
+      const nm = h('input', { value: it.name || '', placeholder: '阶段名称', style: 'flex:1;min-width:0' });
+      nm.addEventListener('input', () => { it.name = nm.value; });
+      const dy = h('input', { type: 'number', min: '0', value: (it.days == null ? '' : it.days), placeholder: '工期(天)', style: 'width:76px;flex:0 0 auto' });
+      dy.addEventListener('input', () => { it.days = dy.value === '' ? null : (Number(dy.value) || 0); });
+      const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { ptCur.splice(i, 1); renderPt(); } }, '×');
+      row.appendChild(up); row.appendChild(down); row.appendChild(nm); row.appendChild(dy); row.appendChild(del);
+      ptList.appendChild(row);
+    });
+  }
+  function loadPtType(id) {
+    ptType = id;
+    if (id === 'fitup') {
+      Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
+        ptCur = tpl.map((t) => ({ name: t.name || '', days: null }));
+        renderPt();
+      });
+    } else {
+      ptCur = (tpls[id] || []).map((x) => ({ name: x.name, days: x.days }));
+      renderPt();
+    }
+  }
+  ptTypeSel.addEventListener('change', () => loadPtType(ptTypeSel.value));
+  loadPtType('villa');
+  planTplCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { ptCur.push({ name: '', days: ptType === 'fitup' ? null : 1 }); renderPt(); } }, '+ 添加阶段'));
+  planTplCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+    const cleaned = ptCur.map((x) => ({ name: (x.name || '').trim(), days: x.days == null ? null : (Number(x.days) || 0) })).filter((x) => x.name);
+    if (ptType === 'fitup') {
+      Meta.set('stageTemplate', cleaned.map((x) => ({ id: uid(), name: x.name }))).then(() => toast('已保存工装模板（阶段名=默认施工阶段）'));
+    } else {
+      tpls[ptType] = cleaned;
+      Meta.set('planTemplates', tpls).then(() => toast('已保存' + ((PLAN_TYPES.find((t) => t.id === ptType) || {}).label) + '进度模板'));
+    }
+  } }, '保存模板'));
+  wrap.appendChild(planTplCard);
+
   // 预算计划类别库（全局，各项目编辑中下拉选择）
   const catLibCard = h('div', { class: 'card' });
   catLibCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '预算计划类别库（在此统一维护，各项目编辑时下拉选择）'));
@@ -2360,10 +2491,23 @@ function projectForm(existing) {
       const row2 = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
       row2.appendChild(h('span', { class: 'muted', style: 'font-size:12px;flex:0 0 auto' }, '预计'));
       const ps = h('input', { type: 'date', value: s.planStart || '', title: '预计开始时间', style: 'flex:1;min-width:0' });
-      ps.addEventListener('input', () => { s.planStart = ps.value; });
       const pe = h('input', { type: 'date', value: s.planEnd || '', title: '预计结束时间', style: 'flex:1;min-width:0' });
-      pe.addEventListener('input', () => { s.planEnd = pe.value; });
-      row2.appendChild(ps); row2.appendChild(pe);
+      const dur = h('input', { type: 'number', min: '0', value: (s.planStart && s.planEnd) ? Math.max(1, daysDiff(s.planEnd, s.planStart) + 1) : '', placeholder: '工期(天)', title: '工期天数：填开始时间+工期，自动推算结束时间', style: 'width:64px;flex:0 0 auto' });
+      const syncDur = () => {
+        dur.value = (s.planStart && s.planEnd && daysDiff(s.planEnd, s.planStart) >= 0)
+          ? (daysDiff(s.planEnd, s.planStart) + 1) : '';
+      };
+      ps.addEventListener('input', () => { s.planStart = ps.value; syncDur(); });
+      pe.addEventListener('input', () => { s.planEnd = pe.value; syncDur(); });
+      dur.addEventListener('input', () => {
+        const n = Number(dur.value) || 0;
+        if (s.planStart && n > 0) {
+          const end = new Date(s.planStart + 'T00:00:00'); end.setDate(end.getDate() + n - 1);
+          s.planEnd = ymd(end); pe.value = s.planEnd;
+        }
+      });
+      syncDur();
+      row2.appendChild(ps); row2.appendChild(pe); row2.appendChild(dur);
       box.appendChild(row2);
       stageList.appendChild(box);
     });
@@ -2377,6 +2521,53 @@ function projectForm(existing) {
       renderStages();
     });
   } }, '从模板载入'));
+  // 按装修类型载入进度模板：别墅/平层/跃层 按工期自动排期；工装只载入阶段名（时间留空手动填）
+  // 注意：用内嵌确认条而非 confirmDialog——后者会整体替换弹窗，导致已填的表单内容全部丢失
+  const tplSel = h('select', { title: '载入对应装修类型的进度计划模板', style: 'flex:0 0 auto' },
+    [h('option', { value: '' }, '载入进度模板…')].concat(PLAN_TYPES.map((t) => h('option', { value: t.id }, t.label))));
+  const tplConfirm = h('div', { style: 'display:none;gap:6px;align-items:center;margin-top:8px;background:rgba(255,206,84,.12);border-radius:10px;padding:8px;flex-wrap:wrap' });
+  const tplMsg = h('span', { style: 'flex:1;min-width:0;font-size:12px' }, '');
+  const tplYes = h('button', { class: 'btn sm primary' }, '确认替换');
+  const tplNo = h('button', { class: 'btn sm ghost' }, '取消');
+  tplConfirm.appendChild(tplMsg); tplConfirm.appendChild(tplYes); tplConfirm.appendChild(tplNo);
+  let pendingApply = null;
+  tplSel.addEventListener('change', () => {
+    const id = tplSel.value;
+    tplSel.value = '';
+    if (!id) return;
+    const label = (PLAN_TYPES.find((t) => t.id === id) || {}).label;
+    pendingApply = () => {
+      const build = (list) => {
+        const base = startD.value;
+        let cursor = base ? new Date(base + 'T00:00:00') : null;
+        stages.length = 0;
+        list.forEach((it) => {
+          const s = { id: uid(), name: it.name || '', done: false, date: '', planStart: '', planEnd: '' };
+          const days = Number(it.days) || 0;
+          if (cursor && days > 0) {
+            s.planStart = ymd(cursor);
+            const end = new Date(cursor); end.setDate(end.getDate() + days - 1);
+            s.planEnd = ymd(end);
+            cursor = new Date(end); cursor.setDate(cursor.getDate() + 1);
+          }
+          stages.push(s);
+        });
+        renderStages();
+        if (!base) toast('未填开工日期，已只载入阶段名；填好开工日期后重新载入即可自动排期');
+      };
+      if (id === 'fitup') {
+        Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => build(tpl.map((t) => ({ name: t.name || '', days: 0 }))));
+      } else {
+        getPlanTemplates().then((t) => build(t[id] || []));
+      }
+    };
+    tplMsg.textContent = '载入「' + label + '」进度模板将替换当前全部施工阶段';
+    tplConfirm.style.display = 'flex';
+  });
+  tplYes.addEventListener('click', () => { tplConfirm.style.display = 'none'; if (pendingApply) { const f = pendingApply; pendingApply = null; f(); } });
+  tplNo.addEventListener('click', () => { tplConfirm.style.display = 'none'; pendingApply = null; });
+  stageBtns.appendChild(tplSel);
+  stageBox.appendChild(tplConfirm);
   stageBox.appendChild(stageBtns);
   f.appendChild(stageBox);
 
