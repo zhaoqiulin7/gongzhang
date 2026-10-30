@@ -1874,33 +1874,9 @@ async function settingsView() {
   } }, '保存'));
   wrap.appendChild(rCard);
 
-  // 施工阶段模板
-  const stageTplCard = h('div', { class: 'card' });
-  stageTplCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '默认施工阶段（新建项目自动带入，可自主增删）'));
-  const tplList = h('div', { style: 'margin-top:8px' });
-  stageTplCard.appendChild(tplList);
-  Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
-    function renderTpl() {
-      tplList.innerHTML = '';
-      tpl.forEach((t, i) => {
-        const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
-        const nm = h('input', { value: t.name || '', style: 'flex:1;min-width:0' });
-        nm.addEventListener('input', () => { tpl[i].name = nm.value; });
-        const up = h('button', { class: 'btn sm ghost', title: '上移', onclick: () => { if (i > 0) { const tmp = tpl[i]; tpl[i] = tpl[i - 1]; tpl[i - 1] = tmp; renderTpl(); } } }, '↑');
-        const down = h('button', { class: 'btn sm ghost', title: '下移', onclick: () => { if (i < tpl.length - 1) { const tmp = tpl[i]; tpl[i] = tpl[i + 1]; tpl[i + 1] = tmp; renderTpl(); } } }, '↓');
-        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { tpl.splice(i, 1); renderTpl(); } }, '×');
-        row.appendChild(up); row.appendChild(down); row.appendChild(nm); row.appendChild(del);
-        tplList.appendChild(row);
-      });
-    }
-    renderTpl();
-    stageTplCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { tpl.push({ id: uid(), name: '' }); renderTpl(); } }, '+ 添加阶段'));
-    stageTplCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
-      const cleaned = tpl.map((t) => ({ id: t.id || uid(), name: (t.name || '').trim() })).filter((t) => t.name);
-      Meta.set('stageTemplate', cleaned).then(() => toast('已保存模板'));
-    } }, '保存模板'));
-  });
-  wrap.appendChild(stageTplCard);
+  // 施工阶段模板：独立编辑卡已停用（与「进度计划模板→工装」是同一份数据 meta.stageTemplate，统一在工装 tab 维护，避免双入口 confusion）
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:2px 2px 0' },
+    'ℹ️ 默认施工阶段（新建项目自动带入、工装模板的阶段名）请到下方「进度计划模板」选「工装进度模板」维护。'));
 
   // 进度计划模板（按装修类型：别墅/平层/跃层/工装，源自内置参考表，可改）
   const planTplCard = h('div', { class: 'card' });
@@ -1917,7 +1893,7 @@ async function settingsView() {
   function renderPt() {
     ptList.innerHTML = '';
     ptHint.textContent = ptType === 'fitup'
-      ? '工装按实际填写：工期默认留空、不强制预设；阶段名称与「默认施工阶段模板」共用，可自行编辑。'
+      ? '工装按实际填写：工期默认留空、不强制预设。此处即「默认施工阶段」：新建项目自动带入这里的阶段名，可自行编辑。'
       : '每阶段工期（天）为默认固定进度，载入项目时按开工日期自动推算各阶段起止时间。';
     ptCur.forEach((it, i) => {
       const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
@@ -2219,12 +2195,7 @@ function projectForm(existing) {
   renderStages();
   const stageBtns = h('div', { style: 'display:flex;gap:6px;margin-top:8px' });
   stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => { stages.push({ id: uid(), name: '', done: false, date: '', planStart: '', planEnd: '' }); renderStages(); } }, '+ 添加阶段'));
-  stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => {
-    Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
-      tpl.forEach((t) => { if (!stages.find((s) => (s.name || '') === t.name)) stages.push({ id: uid(), name: t.name, done: false, date: '', planStart: '', planEnd: '' }); });
-      renderStages();
-    });
-  } }, '从模板载入'));
+  // 旧「从模板载入」按钮已移除：统一走下方「载入进度模板…」下拉（带自动排期，避免双入口混淆）
   // 按装修类型载入进度模板：别墅/平层/跃层 按工期自动排期；工装只载入阶段名（时间留空手动填）
   // 注意：用内嵌确认条而非 confirmDialog——后者会整体替换弹窗，导致已填的表单内容全部丢失
   const tplSel = h('select', { title: '载入对应装修类型的进度计划模板', style: 'flex:0 0 auto' },
