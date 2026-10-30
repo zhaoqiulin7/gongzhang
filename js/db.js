@@ -178,6 +178,7 @@ function seedDemo() {
 
   memPut('meta', { key: 'remindDays', value: 3 });
   memPut('meta', { key: 'stageTemplate', value: [ { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' }, { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' } ] });
+  memPut('meta', { key: 'planCategories', value: ['泥瓦人工', '瓷砖主材', '木工人工', '水电材料', '水电人工', '油漆人工', '垃圾清运', '其他'] });
 }
 
 // ---------------- 对外 API ----------------

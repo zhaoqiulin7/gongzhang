@@ -380,6 +380,7 @@ function seedDemo() {
 
   memPut('meta', { key: 'remindDays', value: 3 });
   memPut('meta', { key: 'stageTemplate', value: [ { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' }, { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' } ] });
+  memPut('meta', { key: 'planCategories', value: ['泥瓦人工', '瓷砖主材', '木工人工', '水电材料', '水电人工', '油漆人工', '垃圾清运', '其他'] });
 }
 
 // ---------------- 对外 API ----------------
@@ -878,6 +879,7 @@ async function projectDetailView(id) {
   // 预算内计划付款（控支预警，详情页可内联编辑金额）
   const planCard = h('div', { class: 'card' });
   let planItems = (p.planItems && p.planItems.length) ? p.planItems.map((x) => ({ id: x.id || uid(), cat: x.cat || '', amount: Number(x.amount) || 0 })) : [];
+  const planLib = await Meta.get('planCategories', []);
   const allTx = await Transactions.byProject(id);
   const spentOf = (itId) => allTx.filter((t) => t.type === 'expense' && t.planCat === itId).reduce((s, t) => s + (Number(t.amount) || 0), 0);
   let planEditMode = false;
@@ -888,7 +890,7 @@ async function projectDetailView(id) {
       h('button', { class: 'btn sm ghost', onclick: () => { planEditMode = !planEditMode; renderPlanCard(); } }, planEditMode ? '完成' : '编辑')
     ]));
     if (!planItems.length) {
-      planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别，点项目「编辑」添加，或用「从表格导入」批量填入'));
+      planCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置计划类别。请到「项目编辑」中从设置类别库下拉选择添加'));
     } else {
       planItems.forEach((it) => {
         const spent = spentOf(it.id);
@@ -899,12 +901,16 @@ async function projectDetailView(id) {
         const row = h('div', { style: 'margin-top:10px' });
         const top = h('div', { class: 'row-between' });
         if (planEditMode) {
-          const nm = h('input', { value: it.cat || '', placeholder: '类别名称（如：泥瓦人工）', style: 'flex:1;min-width:0' });
-          nm.addEventListener('input', () => { it.cat = nm.value; });
+          const sel = h('select', { style: 'flex:1;min-width:0' });
+          const opts = planLib.slice();
+          if (it.cat && !opts.includes(it.cat)) opts.push(it.cat);
+          opts.forEach((c) => sel.appendChild(h('option', { value: c }, c)));
+          sel.value = it.cat || '';
+          sel.addEventListener('change', () => { it.cat = sel.value; });
           const inp = h('input', { type: 'number', inputmode: 'decimal', value: it.amount || '', placeholder: '计划金额', style: 'width:96px' });
           inp.addEventListener('input', () => { it.amount = Number(inp.value) || 0; });
           const del = h('button', { class: 'delete-x', onclick: () => { planItems = planItems.filter((x) => x.id !== it.id); renderPlanCard(); } }, '×');
-          top.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, [nm, inp, del]));
+          top.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, [sel, inp, del]));
         } else {
           top.appendChild(h('div', { style: 'font-size:13px;font-weight:600' }, it.cat || '未命名'));
           top.appendChild(h('div', { class: 'muted', style: 'font-size:12px' }, '计划 ' + fmtMoney(plan) + ' · 已用 ' + fmtMoney(spent) + (over ? ' · 超支 ' + fmtMoney(spent - plan) : (left >= 0 ? ' · 余 ' + fmtMoney(left) : ''))));
@@ -915,8 +921,7 @@ async function projectDetailView(id) {
       });
       if (planEditMode) {
         planCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' }, [
-          h('button', { class: 'btn sm ghost', onclick: () => { planItems.push({ id: uid(), cat: '', amount: 0 }); renderPlanCard(); } }, '+ 添加类别'),
-          h('button', { class: 'btn primary', onclick: () => { p.planItems = planItems; Projects.save(p).then(() => { toast('已保存计划类别'); planEditMode = false; renderPlanCard(); }); } }, '保存计划')
+          h('button', { class: 'btn primary', onclick: () => { p.planItems = planItems; Projects.save(p).then(() => { toast('已保存计划'); planEditMode = false; renderPlanCard(); }); } }, '保存计划')
         ]));
       }
     }
@@ -1106,6 +1111,33 @@ async function settingsView() {
   });
   wrap.appendChild(stageTplCard);
 
+  // 预算计划类别库（全局，各项目编辑中下拉选择）
+  const catLibCard = h('div', { class: 'card' });
+  catLibCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '预算计划类别库（在此统一维护，各项目编辑时下拉选择）'));
+  const catList = h('div', { style: 'margin-top:8px' });
+  catLibCard.appendChild(catList);
+  Meta.get('planCategories', []).then((lib) => {
+    function renderLib() {
+      catList.innerHTML = '';
+      if (!lib.length) catList.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有类别，点下方「+ 添加类别」'));
+      lib.forEach((c, i) => {
+        const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+        const nm = h('input', { value: c, style: 'flex:1;min-width:0' });
+        nm.addEventListener('input', () => { lib[i] = nm.value; });
+        const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { lib.splice(i, 1); renderLib(); } }, '×');
+        row.appendChild(nm); row.appendChild(del);
+        catList.appendChild(row);
+      });
+    }
+    renderLib();
+    catLibCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => { lib.push(''); renderLib(); } }, '+ 添加类别'));
+    catLibCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+      const cleaned = lib.map((x) => (x || '').trim()).filter((x) => x);
+      Meta.set('planCategories', cleaned).then(() => toast('已保存类别库'));
+    } }, '保存类别库'));
+  });
+  wrap.appendChild(catLibCard);
+
   wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:18px' }, '关于'));
   wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:13px;line-height:1.7' },
     '装修记账 · 本地版（PWA）。所有数据仅保存在本机浏览器，不上传任何服务器。可在安卓 Chrome 中“添加到主屏幕”当作 App 使用。当前为 P1：项目管理、记账（含照片/开票/更细维度）、往来单位、首页看板。'));
@@ -1182,19 +1214,25 @@ function projectForm(existing) {
   stageBox.appendChild(stageBtns);
   f.appendChild(stageBox);
 
-  // 预算内计划付款类别（自定义类别+金额，可导入表格批量填入）
+  // 预算内计划付款类别（类别来自「设置-预算计划类别库」，本项目下拉选择并填金额）
   const planItems = (p.planItems && p.planItems.length)
     ? p.planItems.map((x) => ({ id: x.id || uid(), cat: x.cat || '', amount: Number(x.amount) || 0 }))
     : [];
-  const planBox = h('div', { class: 'field' }, [h('label', {}, '预算内计划付款类别')]);
+  let planLib = [];
+  const planBox = h('div', { class: 'field' }, [h('label', {}, '预算内计划付款类别（类别从设置中维护）')]);
   const planList = h('div', { style: 'margin-top:6px' });
   planBox.appendChild(planList);
   const fileInp = h('input', { type: 'file', accept: '.csv,text/csv', style: 'display:none' });
   fileInp.addEventListener('change', (e) => {
     const fl = e.target.files[0];
     if (!fl) return;
-    importPlanCsv(fl, planItems).then((n) => { toast('已导入 ' + n + ' 条计划'); renderPlan(); })
-      .catch(() => toast('导入失败，请检查表格格式'));
+    importPlanCsv(fl, planItems).then((n) => {
+      Meta.get('planCategories', []).then((lib) => {
+        const set = new Set(lib);
+        planItems.forEach((it) => { if (it.cat) set.add(it.cat); });
+        Meta.set('planCategories', Array.from(set)).then(() => { planLib = Array.from(set); toast('已导入 ' + n + ' 条计划'); renderPlan(); });
+      });
+    }).catch(() => toast('导入失败，请检查表格格式'));
   });
   f.appendChild(fileInp);
   const planTools = h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px' }, [
@@ -1206,17 +1244,26 @@ function projectForm(existing) {
     planList.innerHTML = '';
     planItems.forEach((x, i) => {
       const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
-      const nm = h('input', { value: x.cat || '', placeholder: '类别（如：泥瓦人工/瓷砖主材）', style: 'flex:1;min-width:0' });
-      nm.addEventListener('input', () => { x.cat = nm.value; });
+      const nm = h('span', { style: 'flex:1;min-width:0;font-weight:600' }, x.cat || '未命名');
       const amt = h('input', { type: 'number', inputmode: 'decimal', value: x.amount || '', placeholder: '计划金额', style: 'width:120px' });
       amt.addEventListener('input', () => { x.amount = Number(amt.value) || 0; });
       const del = h('button', { class: 'delete-x', onclick: () => { planItems.splice(i, 1); renderPlan(); } }, '×');
       row.appendChild(nm); row.appendChild(amt); row.appendChild(del);
       planList.appendChild(row);
     });
+    const used = planItems.map((x) => x.cat);
+    const avail = (planLib || []).filter((c) => !used.includes(c));
+    if (avail.length) {
+      const sel = h('select', { style: 'flex:1;min-width:0' });
+      avail.forEach((c) => sel.appendChild(h('option', { value: c }, c)));
+      const addBtn = h('button', { class: 'btn sm primary', onclick: () => { if (sel.value) { planItems.push({ id: uid(), cat: sel.value, amount: 0 }); renderPlan(); } } }, '添加');
+      planList.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' }, [sel, addBtn]));
+    } else if (!planItems.length) {
+      planList.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:6px' }, '设置中还没有计划类别，请先到「设置 → 预算计划类别库」添加'));
+    }
   }
   renderPlan();
-  planBox.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:8px', onclick: () => { planItems.push({ id: uid(), cat: '', amount: 0 }); renderPlan(); } }, '+ 添加类别'));
+  Meta.get('planCategories', []).then((lib) => { planLib = lib; renderPlan(); });
   f.appendChild(planBox);
 
   const save = h('button', { class: 'btn primary', onclick: () => {
