@@ -174,6 +174,7 @@ h2.section { font-size: 16px; margin: 4px 0 12px; color: var(--text); }
 .list-item { display: flex; align-items: center; justify-content: space-between; padding: 13px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; }
 .list-item .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
 .delete-x { color: var(--danger); background: none; border: none; font-size: 18px; cursor: pointer; padding: 4px 8px; }
+.edit-x { color: var(--primary); background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; }
 
 .bar { height: 8px; background: var(--surface-2); border-radius: 5px; overflow: hidden; margin-top: 5px; }
 .bar-fill { height: 100%; background: var(--accent); border-radius: 5px; transition: width .2s; }
@@ -964,7 +965,8 @@ async function projectDetailView(id) {
       ]);
       const right = h('div', { style: 'display:flex;align-items:center;gap:8px' }, [
         h('div', { class: 'amt ' + (t.type === 'income' ? 'income' : 'expense') }, (t.type === 'income' ? '+' : '-') + fmtMoney(t.amount)),
-        h('button', { class: 'delete-x', onclick: () => confirmDialog('删除这笔记账？', () => { Transactions.remove(t).then(render); }) }, '×')
+        h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, t); } }, '✎'),
+        h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？', () => { Transactions.remove(t).then(render); }); } }, '×')
       ]);
       const row = h('div', { class: 'tx' }, [left, right]);
       if (t.attachmentId) {
@@ -1122,10 +1124,12 @@ async function settingsView() {
       if (!lib.length) catList.appendChild(h('div', { class: 'muted', style: 'font-size:13px' }, '还没有类别，点下方「+ 添加类别」'));
       lib.forEach((c, i) => {
         const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+        const up = h('button', { class: 'btn sm ghost', title: '上移', onclick: () => { if (i > 0) { const tmp = lib[i]; lib[i] = lib[i - 1]; lib[i - 1] = tmp; renderLib(); } } }, '↑');
+        const down = h('button', { class: 'btn sm ghost', title: '下移', onclick: () => { if (i < lib.length - 1) { const tmp = lib[i]; lib[i] = lib[i + 1]; lib[i + 1] = tmp; renderLib(); } } }, '↓');
         const nm = h('input', { value: c, style: 'flex:1;min-width:0' });
         nm.addEventListener('input', () => { lib[i] = nm.value; });
         const del = h('button', { class: 'delete-x', title: '删除', onclick: () => { lib.splice(i, 1); renderLib(); } }, '×');
-        row.appendChild(nm); row.appendChild(del);
+        row.appendChild(up); row.appendChild(down); row.appendChild(nm); row.appendChild(del);
         catList.appendChild(row);
       });
     }
@@ -1290,8 +1294,9 @@ function projectForm(existing) {
 }
 
 // ---------- 表单：记账 ----------
-async function txForm(presetType, presetProject) {
-  let type = presetType || 'income';
+async function txForm(presetType, presetProject, existingTx) {
+  const isEdit = !!existingTx;
+  let type = presetType || (existingTx && existingTx.type) || 'income';
   const projects = await Projects.all();
   const parties = await Parties.all();
 
@@ -1310,9 +1315,25 @@ async function txForm(presetType, presetProject) {
   const dyn = h('div');
   f.appendChild(dyn);
 
+  let planSel = null;
+  async function refillPlan(forceValue) {
+    if (!planSel) return;
+    planSel.innerHTML = '';
+    planSel.appendChild(h('option', { value: '' }, '不计入计划/未选'));
+    const pid = projSel.value;
+    if (pid) {
+      const pp = await Projects.get(pid);
+      ((pp && pp.planItems) || []).forEach((it) => {
+        planSel.appendChild(h('option', { value: it.id }, it.cat + (it.amount ? '（计划' + it.amount + '）' : '')));
+      });
+    }
+    if (forceValue) planSel.value = forceValue;
+  }
+
   function toggleType() {
     dyn.innerHTML = '';
     if (type === 'income') {
+      planSel = null;
       const sub = h('select', {}, INCOME_TYPES.map((x) => h('option', {}, x)));
       field(dyn, '款项类型', sub); dyn._sub = sub;
       const inv = h('select', {}, [h('option', {}, '未开'), h('option', {}, '已开')]);
@@ -1334,22 +1355,10 @@ async function txForm(presetType, presetProject) {
       field(dyn, '工种', trade); dyn._trade = trade;
       const material = h('input', { placeholder: '如：瓷砖/电线/腻子' });
       field(dyn, '材料大类', material); dyn._material = material;
-      const planSel = h('select', {}, [h('option', { value: '' }, '不计入计划/未选')]);
+      planSel = h('select', {}, [h('option', { value: '' }, '不计入计划/未选')]);
       field(dyn, '预算内计划类别', planSel); dyn._planSel = planSel;
-      function refillPlan() {
-        planSel.innerHTML = '';
-        planSel.appendChild(h('option', { value: '' }, '不计入计划/未选'));
-        const pid = projSel.value;
-        if (pid) {
-          Projects.get(pid).then((pp) => {
-            ((pp && pp.planItems) || []).forEach((it) => {
-              planSel.appendChild(h('option', { value: it.id }, it.cat + (it.amount ? '（计划' + it.amount + '）' : '')));
-            });
-          });
-        }
-      }
-      refillPlan();
-      projSel.addEventListener('change', refillPlan);
+      if (!isEdit) refillPlan();
+      projSel.addEventListener('change', () => refillPlan());
     }
     // 金额、日期、方式、备注、照片（共用）
     const amount = h('input', { type: 'number', inputmode: 'decimal', placeholder: '0.00' });
@@ -1366,11 +1375,43 @@ async function txForm(presetType, presetProject) {
     let photoFile = null;
     fileInput.addEventListener('change', (e) => {
       const fl = e.target.files[0];
-      if (fl) { photoFile = fl; thumb.src = URL.createObjectURL(fl); thumb.style.display = 'block'; }
+      if (fl) { photoFile = fl; thumb.src = URL.createObjectURL(fl); thumb.style.display = 'block'; keepAttachId = null; }
     });
     field(dyn, '凭证照片', h('div', {}, [fileInput, thumb])); dyn._photoFile = () => photoFile;
   }
+
+  let keepAttachId = isEdit ? (existingTx.attachmentId || null) : null;
   toggleType();
+
+  // 预填（编辑模式）
+  if (isEdit) {
+    projSel.value = existingTx.projectId || '';
+    // type 已在初始化时为 existingTx.type，字段已按此构建
+    if (type === 'income') {
+      dyn._sub.value = existingTx.subType || INCOME_TYPES[0];
+      dyn._inv.value = existingTx.invoiceStatus || '未开';
+      dyn._invType.value = existingTx.invoiceType || '普票';
+      dyn._tax.value = existingTx.taxAmount || '';
+    } else {
+      dyn._cat.value = existingTx.category || EXPENSE_CATS[0];
+      dyn._partySel.value = existingTx.partyId || '';
+      dyn._region.value = existingTx.region || '—';
+      dyn._trade.value = existingTx.trade || '—';
+      dyn._material.value = existingTx.material || '';
+      await refillPlan(existingTx.planCat || '');
+    }
+    dyn._amount.value = existingTx.amount || '';
+    dyn._date.value = fmtDate(existingTx.date) || today();
+    dyn._method.value = existingTx.method || PAY_METHODS[0];
+    dyn._note.value = existingTx.note || '';
+    if (keepAttachId) {
+      const url = await attURL(keepAttachId);
+      if (url) {
+        const thumb = dyn.querySelector('img.thumb');
+        if (thumb) { thumb.src = url; thumb.style.display = 'block'; }
+      }
+    }
+  }
 
   const save = h('button', { class: 'btn primary', onclick: async () => {
     const pid = projSel.value;
@@ -1378,9 +1419,11 @@ async function txForm(presetType, presetProject) {
     const amount = Number(dyn._amount.value);
     if (!amount || amount <= 0) { toast('请输入正确金额'); return; }
     const t = {
-      id: uid(), projectId: pid, type,
+      id: isEdit ? existingTx.id : uid(),
+      projectId: pid, type,
       amount, date: dyn._date.value || today(),
-      method: dyn._method.value, note: dyn._note.value.trim(), createdAt: Date.now()
+      method: dyn._method.value, note: dyn._note.value.trim(),
+      createdAt: isEdit ? (existingTx.createdAt || Date.now()) : Date.now()
     };
     if (type === 'income') {
       t.subType = dyn._sub.value; t.invoiceStatus = dyn._inv.value; t.invoiceType = dyn._invType.value; t.taxAmount = Number(dyn._tax.value) || 0;
@@ -1399,11 +1442,16 @@ async function txForm(presetType, presetProject) {
       t.planCat = dyn._planSel ? dyn._planSel.value : '';
     }
     const pf = dyn._photoFile();
-    if (pf) t.attachmentId = await Attachments.save(pf, pf.type);
-    Transactions.save(t).then(() => { closeModal(); toast('已记录'); render(); });
-  } }, '保存');
+    if (pf) {
+      if (isEdit && existingTx.attachmentId) Attachments.remove(existingTx.attachmentId);
+      t.attachmentId = await Attachments.save(pf, pf.type);
+    } else if (keepAttachId) {
+      t.attachmentId = keepAttachId;
+    }
+    Transactions.save(t).then(() => { closeModal(); toast(isEdit ? '已更新' : '已记录'); render(); });
+  } }, isEdit ? '保存修改' : '保存');
   const cancel = h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消');
-  openModal('记一笔', f, [cancel, save]);
+  openModal(isEdit ? '编辑记账' : '记一笔', f, [cancel, save]);
 }
 
 // ---------- 表单：往来单位 ----------
