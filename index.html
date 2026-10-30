@@ -459,9 +459,9 @@ function seedDemo() {
   const R = (o) => memPut('reminders', Object.assign({ createdAt: now, done: false }, o));
 
   P({ id: 'p1', name: '保利香槟 3-1201 王先生', clientName: '王先生', phone: '138****0011', address: '保利香槟 3栋1201', houseType: '三室两厅', buildArea: 89, constructArea: 89, manager: '老陈', designer: '设计部·林', contractAmount: 80000, costBudget: 60000, startDate: '2026-09-01', endDate: '2026-11-30', status: 'ongoing',
-    stages: [ { id: 'p1s1', name: '开工', done: true, date: '2026-09-01' }, { id: 'p1s2', name: '水电施工', done: true, date: '2026-09-10' }, { id: 'p1s3', name: '水电验收', done: true, date: '2026-09-18' }, { id: 'p1s4', name: '泥工进场', done: false, date: '' }, { id: 'p1s5', name: '木工交底', done: false, date: '' }, { id: 'p1s6', name: '竣工', done: false, date: '' } ], planItems: [ { id: 'p1pi1', cat: '泥瓦人工', amount: 30000 }, { id: 'p1pi2', cat: '瓷砖主材', amount: 20000 }, { id: 'p1pi3', cat: '木工人工', amount: 15000 } ] });
+    stages: [ { id: 'p1s1', name: '开工', done: true, date: '2026-09-01', planStart: '2026-09-01', planEnd: '2026-09-02' }, { id: 'p1s2', name: '水电施工', done: true, date: '2026-09-10', planStart: '2026-09-03', planEnd: '2026-09-10' }, { id: 'p1s3', name: '水电验收', done: true, date: '2026-09-18', planStart: '2026-09-11', planEnd: '2026-09-18' }, { id: 'p1s4', name: '泥工进场', done: false, date: '', planStart: '2026-09-19', planEnd: '2026-10-25' }, { id: 'p1s5', name: '木工交底', done: false, date: '', planStart: '2026-10-26', planEnd: '2026-11-15' }, { id: 'p1s6', name: '竣工', done: false, date: '', planStart: '2026-11-16', planEnd: '2026-11-30' } ], planItems: [ { id: 'p1pi1', cat: '泥瓦人工', amount: 30000 }, { id: 'p1pi2', cat: '瓷砖主材', amount: 20000 }, { id: 'p1pi3', cat: '木工人工', amount: 15000 } ] });
   P({ id: 'p2', name: '绿地城 5-802 李女士', clientName: '李女士', phone: '139****0022', address: '绿地城 5栋802', houseType: '四室两厅', buildArea: 120, constructArea: 120, manager: '老陈', designer: '设计部·林', contractAmount: 120000, costBudget: 95000, startDate: '2026-10-10', endDate: '2026-12-20', status: 'ongoing',
-    stages: [ { id: 'p2s1', name: '开工', done: false, date: '' }, { id: 'p2s2', name: '水电施工', done: false, date: '' }, { id: 'p2s3', name: '水电验收', done: false, date: '' }, { id: 'p2s4', name: '泥工进场', done: false, date: '' }, { id: 'p2s5', name: '木工交底', done: false, date: '' }, { id: 'p2s6', name: '竣工', done: false, date: '' } ], planItems: [ { id: 'p2pi1', cat: '水电材料', amount: 25000 }, { id: 'p2pi2', cat: '泥瓦人工', amount: 40000 } ] });
+    stages: [ { id: 'p2s1', name: '开工', done: false, date: '', planStart: '2026-10-10', planEnd: '2026-10-12' }, { id: 'p2s2', name: '水电施工', done: false, date: '', planStart: '2026-10-13', planEnd: '2026-11-03' }, { id: 'p2s3', name: '水电验收', done: false, date: '', planStart: '2026-11-04', planEnd: '2026-11-10' }, { id: 'p2s4', name: '泥工进场', done: false, date: '', planStart: '2026-11-11', planEnd: '2026-12-05' }, { id: 'p2s5', name: '木工交底', done: false, date: '', planStart: '2026-12-06', planEnd: '2026-12-15' }, { id: 'p2s6', name: '竣工', done: false, date: '', planStart: '2026-12-16', planEnd: '2026-12-20' } ], planItems: [ { id: 'p2pi1', cat: '水电材料', amount: 25000 }, { id: 'p2pi2', cat: '泥瓦人工', amount: 40000 } ] });
 
   PA({ id: 'pa1', name: '佛山瓷砖批发·陈老板', type: 'supplier', phone: '', note: '主材供应商', payStatus: 'unpaid' });
   PA({ id: 'pa2', name: '木工·老张', type: 'worker', phone: '', note: '木工班组', payStatus: 'paid' });
@@ -1036,6 +1036,30 @@ async function homeView() {
     wrap.appendChild(dueCard);
   }
 
+  // P2.5：工期预警（未完成阶段预计结束时间 逾期/临近）
+  try {
+    const sw2 = await stageWarnings();
+    if (sw2.length) {
+      sw2.sort((a, b) => (b.level === 'over' ? 1 : 0) - (a.level === 'over' ? 1 : 0) || (a.s.planEnd || '').localeCompare(b.s.planEnd || ''));
+      wrap.appendChild(h('h2', { class: 'section' }, '⏰ 工期预警（' + sw2.length + '）'));
+      const sCard = h('div', { class: 'card' });
+      sw2.slice(0, 10).forEach((w) => {
+        sCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
+          h('div', { style: 'flex:1;min-width:0' }, [
+            h('div', { style: 'font-weight:600;font-size:14px' }, [
+              h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '逾期' : '临近'),
+              document.createTextNode(w.p.name)
+            ]),
+            h('div', { class: 'meta' }, w.msg)
+          ]),
+          h('span', { class: 'chev' }, '›')
+        ]));
+      });
+      if (sw2.length > 10) sCard.appendChild(h('div', { class: 'muted', style: 'font-size:12px;padding:8px 0 2px' }, '还有 ' + (sw2.length - 10) + ' 条，进项目详情查看'));
+      wrap.appendChild(sCard);
+    }
+  } catch (e) { /* 工期预警失败不影响首页 */ }
+
   // P2：预算预警（总成本预算 + 各计划类别，超支红/接近黄）
   try {
     const warns = await budgetWarnings();
@@ -1558,7 +1582,7 @@ async function projectDetailView(id) {
         const np = Object.assign({}, p, {
           id: uid(), name: (p.name || '未命名') + '（副本）', status: 'ongoing',
           createdAt: Date.now(), updatedAt: Date.now(),
-          stages: (p.stages || []).map((s) => ({ id: uid(), name: s.name || '', done: false, date: '' })),
+          stages: (p.stages || []).map((s) => ({ id: uid(), name: s.name || '', done: false, date: '', planStart: s.planStart || '', planEnd: s.planEnd || '' })),
           planItems: (p.planItems || []).map((it) => ({ id: uid(), cat: it.cat || '', amount: Number(it.amount) || 0 }))
         });
         Projects.save(np).then(() => { toast('已创建副本，请修改项目名称'); location.hash = '#/project/' + np.id; projectForm(np); });
@@ -1582,26 +1606,49 @@ async function projectDetailView(id) {
   if (!stages.length) {
     stageCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '未设置阶段，点「添加/改名」或项目「编辑」添加'));
   } else {
+    const stageAlertDays = Number(await Meta.get('stageAlertDays', 3)) || 3;
+    const td = today();
     stages.forEach((s) => {
-      const row = h('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:8px' });
+      // 工期状态：未完成且有预计结束时间 → 逾期红 / 临近黄
+      let warn = null;
+      if (!s.done && s.planEnd) {
+        const dd = daysDiff(s.planEnd, td);
+        if (dd < 0) warn = { cls: 'unpaid', text: '⚠️ 逾期 ' + (-dd) + ' 天' };
+        else if (dd <= stageAlertDays) warn = { cls: 'finished', text: '⏰ ' + (dd === 0 ? '今天到期' : '还剩 ' + dd + ' 天') };
+      }
+      const box = h('div', { style: 'border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:8px' });
+      const row = h('div', { style: 'display:flex;gap:8px;align-items:center' });
       const cb = h('input', { type: 'checkbox', style: 'width:18px;height:18px;flex:0 0 auto' });
       cb.checked = !!s.done;
       cb.disabled = locked;
       cb.addEventListener('change', () => { s.done = cb.checked; if (s.done && !s.date) s.date = today(); Projects.save(p).then(render); });
       const nameWrap = h('div', { style: 'flex:1;min-width:0' }, [
-        h('div', { style: 'font-weight:600;font-size:13px' }, s.name || '未命名阶段'),
+        h('div', { style: 'font-weight:600;font-size:13px' }, [
+          document.createTextNode(s.name || '未命名阶段'),
+          warn ? h('span', { class: 'tag ' + warn.cls, style: 'margin-left:6px' }, warn.text) : null
+        ]),
         h('div', { class: 'meta', style: s.done ? 'color:var(--income)' : '' }, s.done ? '已完成' : '未完成')
       ]);
-      const dt = h('input', { type: 'date', value: s.date || '', style: 'width:130px;flex:0 0 auto' });
-      if (locked) dt.disabled = true;
-      dt.addEventListener('change', () => { s.date = dt.value; Projects.save(p).then(() => toast('已记录完成时间')); });
-      if (!locked) {
-        const del = h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×');
-        row.appendChild(cb); row.appendChild(nameWrap); row.appendChild(dt); row.appendChild(del);
-      } else {
-        row.appendChild(cb); row.appendChild(nameWrap); row.appendChild(dt);
-      }
-      stageCard.appendChild(row);
+      const del = locked ? null : h('button', { class: 'delete-x', onclick: () => { p.stages = stages.filter((x) => x.id !== s.id); Projects.save(p).then(render); } }, '×');
+      row.appendChild(cb); row.appendChild(nameWrap);
+      if (del) row.appendChild(del);
+      box.appendChild(row);
+      // 第二行：预计开始 / 预计结束 / 实际完成（均可改，即改即存）
+      const row2 = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap' });
+      const mk = (label, key, width) => {
+        const wrap = h('div', { style: 'display:flex;gap:3px;align-items:center;flex:1;min-width:0' });
+        wrap.appendChild(h('span', { class: 'muted', style: 'font-size:11px;flex:0 0 auto' }, label));
+        const inp = h('input', { type: 'date', value: s[key] || '', title: label, style: 'width:' + width + ';min-width:0;flex:1' });
+        if (locked) inp.disabled = true;
+        inp.addEventListener('change', () => { s[key] = inp.value; Projects.save(p); });
+        wrap.appendChild(inp);
+        return wrap;
+      };
+      row2.appendChild(mk('预计起', 'planStart', '96px'));
+      row2.appendChild(mk('预计止', 'planEnd', '96px'));
+      row2.appendChild(mk('实际完', 'date', '96px'));
+      box.appendChild(row2);
+      stageCard.appendChild(box);
     });
   }
   wrap.appendChild(stageCard);
@@ -1986,6 +2033,7 @@ async function settingsView() {
   const remindDays = await Meta.get('remindDays', 3);
   let notifyOn = await Meta.get('notifyEnabled', true);
   const alertPct = await Meta.get('budgetAlertPct', 80);
+  const stageAlertDays = await Meta.get('stageAlertDays', 3);
   const wrap = h('div');
   wrap.appendChild(h('h2', { class: 'section' }, '提醒与预警'));
   const rCard = h('div', { class: 'card' });
@@ -2032,11 +2080,17 @@ async function settingsView() {
   const pctInp = h('input', { type: 'number', min: '1', max: '100', value: String(alertPct) });
   rCard.appendChild(h('div', { class: 'field', style: 'margin:10px 0 0' }, [pctInp]));
 
+  // 阶段工期预警提前天数
+  rCard.appendChild(h('div', { class: 'muted', style: 'font-size:13px;margin-top:12px' }, '阶段工期预警提前天数：未完成阶段距预计结束不足 N 天时提醒（逾期必提醒）'));
+  const stageInp = h('input', { type: 'number', min: '0', max: '30', value: String(stageAlertDays) });
+  rCard.appendChild(h('div', { class: 'field', style: 'margin:10px 0 0' }, [stageInp]));
+
   rCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:12px', onclick: () => {
     Promise.all([
       Meta.set('remindDays', Number(input.value) || 0),
       Meta.set('notifyEnabled', !!notifyOn),
-      Meta.set('budgetAlertPct', Math.min(100, Math.max(1, Number(pctInp.value) || 80)))
+      Meta.set('budgetAlertPct', Math.min(100, Math.max(1, Number(pctInp.value) || 80))),
+      Meta.set('stageAlertDays', Math.max(0, Number(stageInp.value) || 0))
     ]).then(() => toast('已保存提醒与预警设置'));
   } }, '保存'));
   wrap.appendChild(rCard);
@@ -2253,7 +2307,7 @@ function projectForm(existing) {
   const isEdit = !!existing;
   const f = h('div');
   const stages = (p.stages && p.stages.length)
-    ? p.stages.map((s) => ({ id: s.id || uid(), name: s.name || '', done: !!s.done, date: s.date || '' }))
+    ? p.stages.map((s) => ({ id: s.id || uid(), name: s.name || '', done: !!s.done, date: s.date || '', planStart: s.planStart || '', planEnd: s.planEnd || '' }))
     : [];
   if (!isEdit) {
     Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
@@ -2292,24 +2346,34 @@ function projectForm(existing) {
   function renderStages() {
     stageList.innerHTML = '';
     stages.forEach((s, i) => {
-      const row = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
-      const cb = h('input', { type: 'checkbox' }); cb.checked = !!s.done;
+      const box = h('div', { style: 'border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:6px' });
+      const row = h('div', { style: 'display:flex;gap:6px;align-items:center' });
+      const cb = h('input', { type: 'checkbox', title: '已完成' }); cb.checked = !!s.done;
       cb.addEventListener('change', () => { s.done = cb.checked; });
       const nm = h('input', { value: s.name || '', placeholder: '阶段名称', style: 'flex:1;min-width:0' });
       nm.addEventListener('input', () => { s.name = nm.value; });
-      const dt = h('input', { type: 'date', value: s.date || '', style: 'width:132px' });
+      const dt = h('input', { type: 'date', value: s.date || '', title: '实际完成时间', style: 'width:128px;flex:0 0 auto' });
       dt.addEventListener('input', () => { s.date = dt.value; });
       const del = h('button', { class: 'delete-x', onclick: () => { stages.splice(i, 1); renderStages(); } }, '×');
       row.appendChild(cb); row.appendChild(nm); row.appendChild(dt); row.appendChild(del);
-      stageList.appendChild(row);
+      box.appendChild(row);
+      const row2 = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px' });
+      row2.appendChild(h('span', { class: 'muted', style: 'font-size:12px;flex:0 0 auto' }, '预计'));
+      const ps = h('input', { type: 'date', value: s.planStart || '', title: '预计开始时间', style: 'flex:1;min-width:0' });
+      ps.addEventListener('input', () => { s.planStart = ps.value; });
+      const pe = h('input', { type: 'date', value: s.planEnd || '', title: '预计结束时间', style: 'flex:1;min-width:0' });
+      pe.addEventListener('input', () => { s.planEnd = pe.value; });
+      row2.appendChild(ps); row2.appendChild(pe);
+      box.appendChild(row2);
+      stageList.appendChild(box);
     });
   }
   renderStages();
   const stageBtns = h('div', { style: 'display:flex;gap:6px;margin-top:8px' });
-  stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => { stages.push({ id: uid(), name: '', done: false, date: '' }); renderStages(); } }, '+ 添加阶段'));
+  stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => { stages.push({ id: uid(), name: '', done: false, date: '', planStart: '', planEnd: '' }); renderStages(); } }, '+ 添加阶段'));
   stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => {
     Meta.get('stageTemplate', DEFAULT_STAGES).then((tpl) => {
-      tpl.forEach((t) => { if (!stages.find((s) => (s.name || '') === t.name)) stages.push({ id: uid(), name: t.name, done: false, date: '' }); });
+      tpl.forEach((t) => { if (!stages.find((s) => (s.name || '') === t.name)) stages.push({ id: uid(), name: t.name, done: false, date: '', planStart: '', planEnd: '' }); });
       renderStages();
     });
   } }, '从模板载入'));
@@ -2997,6 +3061,42 @@ async function notifyBudgetWarnings() {
   } catch (e) { /* ignore */ }
 }
 
+// 工期预警：未完成阶段的预计结束时间 已逾期/临近（提前天数 meta.stageAlertDays 默认 3）
+async function stageWarnings() {
+  const projects = await Projects.all();
+  const alertDays = Number(await Meta.get('stageAlertDays', 3)) || 0;
+  const td = today();
+  const out = [];
+  projects.filter((p) => p.status !== 'settled').forEach((p) => {
+    (p.stages || []).forEach((s) => {
+      if (s.done || !s.planEnd) return;
+      const d = daysDiff(s.planEnd, td); // 负数 = 已逾期
+      if (d < 0) out.push({ p, s, level: 'over', msg: '「' + (s.name || '未命名阶段') + '」已逾期 ' + (-d) + ' 天（原计划 ' + fmtDate(s.planEnd) + ' 完成）' });
+      else if (d <= alertDays) out.push({ p, s, level: 'near', msg: '「' + (s.name || '未命名阶段') + '」' + (d === 0 ? '今天' : '还有 ' + d + ' 天') + '到预计完成日（' + fmtDate(s.planEnd) + '）' });
+    });
+  });
+  return out;
+}
+
+// 通知工期预警（每天每阶段最多一次）
+async function notifyStageWarnings() {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const warns = await stageWarnings();
+    if (!warns.length) return;
+    const td = today();
+    let shown = 0;
+    for (const w of warns) {
+      const key = 'stage|' + w.p.id + '|' + w.s.id + '|' + td;
+      if (notifLog()[key] === td) continue;
+      const head = w.level === 'over' ? '⏰ 工期逾期预警' : '⏰ 工期临近提醒';
+      const ok = await showNotif(head, w.p.name + ' · ' + w.msg, 'stage-' + w.s.id, w.p.id);
+      if (ok) { notifMark(key); shown++; }
+      if (shown >= 3) break;
+    }
+  } catch (e) { /* ignore */ }
+}
+
 // 记支出后即时预警（toast 必弹 + 系统通知每日一次）
 async function budgetAlertAfterSave(t) {
   try {
@@ -3054,10 +3154,10 @@ function init() {
   // P2：启动即注册 SW；首次检查 + 每分钟/回到前台时检查到期节点与超支
   ensureSW();
   listenNotifyNav();
-  setTimeout(() => { notifyDueReminders(); notifyBudgetWarnings(); }, 3000);
-  setInterval(() => { if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); } }, 60000);
+  setTimeout(() => { notifyDueReminders(); notifyBudgetWarnings(); notifyStageWarnings(); }, 3000);
+  setInterval(() => { if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); notifyStageWarnings(); } }, 60000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); }
+    if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); notifyStageWarnings(); }
   });
 }
 
