@@ -3341,6 +3341,29 @@ async function txForm(presetType, presetProject, existingTx, preset) {
   seg.appendChild(bEx); seg.appendChild(bIn); seg.appendChild(bTr);
   f.appendChild(seg);
 
+  // v2.3.0：记账弹窗内嵌「常用模板」快捷入口（此前模板只在首页有，记一笔时要先退回首页）
+  const tpls = await getTemplates();
+  if (tpls.length && !isEdit) {
+    const tplBox = h('div', { style: 'margin-bottom:12px' });
+    tplBox.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-bottom:6px' }, '常用模板（点击套用）'));
+    const tplChips = h('div', { class: 'chips' });
+    tpls.forEach((tp) => {
+      tplChips.appendChild(h('button', { class: 'chip', title: '套用模板', onclick: () => {
+        if (tp.type && tp.type !== type) setType(tp.type);
+        if (tp.amount) amount.value = String(tp.amount);
+        if (tp.category) {
+          if ((tp.type || type) === 'income') { if (subTypeSel) subTypeSel.value = tp.category; }
+          else if (catSel) catSel.value = tp.category;
+        }
+        if (tp.account && acctSel) acctSel.value = tp.account;
+        if (tp.note && noteSel) noteSel.value = tp.note;
+        toast('已套用模板「' + (tp.name || '') + '」');
+      } }, tp.name + (tp.amount ? ' · ' + M(tp.amount) : '')));
+    });
+    tplBox.appendChild(tplChips);
+    f.appendChild(tplBox);
+  }
+
   // ---- 金额大字 + 拍照 ----
   const amount = h('input', { class: 'amt-input', type: 'number', inputmode: 'decimal', placeholder: '0.00' });
   const fileInp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
