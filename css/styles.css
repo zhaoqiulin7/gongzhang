@@ -192,6 +192,7 @@ h2.section { font-size: var(--g-fs-lg); margin: var(--g-sp-1) 0 12px; color: var
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   border: none; border-radius: var(--g-r-btn); padding: var(--g-sp-3) 16px; font-size: var(--g-fs-base); font-weight: 600;
   background: var(--surface-2); color: var(--text); cursor: pointer; width: 100%;
+  white-space: nowrap; /* v2.0.0：按钮文案一律不折行（设置页「立即备份」曾被挤成两行） */
 }
 .btn.primary { background: var(--primary); color: #fff; }
 .btn.accent { background: var(--accent); color: var(--on-accent); }

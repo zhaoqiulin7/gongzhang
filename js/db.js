@@ -3,7 +3,8 @@
 // 对外暴露与旧版一致的 API，app.js 无需改动。
 
 const DB_NAME = 'decor-accounting';
-const DB_VERSION = 1;
+// v2（v2.0.0）：新增 snapshots（自动/导入前快照）与 trash（回收站）两个仓库
+const DB_VERSION = 2;
 
 // 各对象仓库定义（keyPath + 索引；索引为 {name, keyPath} 映射）
 const STORES = {
@@ -12,7 +13,11 @@ const STORES = {
   parties: { keyPath: 'id', indexes: [] },
   attachments: { keyPath: 'id', indexes: [] },
   reminders: { keyPath: 'id', indexes: [ { name: 'byProject', keyPath: 'projectId' } ] },
-  meta: { keyPath: 'key', indexes: [] }
+  meta: { keyPath: 'key', indexes: [] },
+  // 本地快照：{ id, kind:'auto'|'manual'|'pre-import', createdAt, bytes, data }
+  snapshots: { keyPath: 'id', indexes: [ { name: 'byCreatedAt', keyPath: 'createdAt' } ] },
+  // 回收站：{ id, store, rec, groupId, deletedAt, label }
+  trash: { keyPath: 'id', indexes: [ { name: 'byDeletedAt', keyPath: 'deletedAt' } ] }
 };
 
 let backend = null; // 'idb' | 'mem'
@@ -208,35 +213,151 @@ function seedDemo() {
 }
 
 // ---------------- 对外 API ----------------
+// ---------------- 回收站（v2.0.0）----------------
+// 删除的项目/流水/往来先进回收站，可整体还原（groupId 保证项目与其流水、节点一起还原）
+const TRASH_KEEP_DAYS = 30;
+const Trash = {
+  all: () => getAll('trash').then((list) => list.sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0))),
+  byGroup: (groupId) => getAll('trash').then((list) => list.filter((x) => x.groupId === groupId)),
+  /** 放入回收站；label 用于界面展示 */
+  put: (storeName, rec, groupId, label) =>
+    put('trash', { id: uid(), store: storeName, rec: rec, groupId: groupId || uid(), deletedAt: Date.now(), label: label || '' }),
+  /** 还原一组（默认整组） */
+  restore: async (groupId) => {
+    const items = await Trash.byGroup(groupId);
+    if (!items.length) throw new Error('回收站中没有该记录');
+    // 先还原主记录（项目/往来），再还原从属记录，避免索引短暂不一致
+    items.sort((a, b) => (a.store === 'projects' ? -1 : b.store === 'projects' ? 1 : 0));
+    let failed = 0;
+    for (const it of items) {
+      try { await put(it.store, it.rec); } catch (e) { failed++; }
+    }
+    if (failed) throw new Error('还原时 ' + failed + ' 条记录失败');
+    await Promise.all(items.map((it) => del('trash', it.id)));
+    return items.length;
+  },
+  remove: (id) => del('trash', id),
+  removeGroup: async (groupId) => {
+    const items = await Trash.byGroup(groupId);
+    for (const it of items) {
+      if (it.store === 'transactions' && it.rec && it.rec.attachmentId) await del('attachments', it.rec.attachmentId);
+    }
+    await Promise.all(items.map((it) => del('trash', it.id)));
+  },
+  clear: async () => {
+    const items = await getAll('trash');
+    for (const it of items) {
+      if (it.store === 'transactions' && it.rec && it.rec.attachmentId) await del('attachments', it.rec.attachmentId);
+    }
+    await Promise.all(items.map((it) => del('trash', it.id)));
+    return items.length;
+  },
+  /** 清理超过保留期的记录（启动时调用） */
+  prune: async (days) => {
+    const keep = (days || TRASH_KEEP_DAYS) * 86400000;
+    const items = await getAll('trash');
+    const now = Date.now();
+    let n = 0;
+    for (const it of items) {
+      if (now - (it.deletedAt || 0) > keep) {
+        if (it.store === 'transactions' && it.rec && it.rec.attachmentId) await del('attachments', it.rec.attachmentId);
+        await del('trash', it.id); n++;
+      }
+    }
+    return n;
+  }
+};
+
+// ---------------- 本地快照（v2.0.0）----------------
+// 纯前端账本最大风险是浏览器清理 IndexedDB，故本地保留最近 N 份全量快照，可一键回滚
+const SNAPSHOT_KEEP = 7;
+const SNAPSHOT_MAX_BYTES = 12 * 1024 * 1024; // 超过则丢弃附件（凭证照片），保住账目主体
+const Snapshots = {
+  all: () => getAll('snapshots').then((list) => list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))),
+  get: (id) => get('snapshots', id),
+  /**
+   * 存一份快照。kind: 'auto' | 'manual' | 'pre-import'
+   * @returns {Promise<{id,bytes,attachmentsIncluded}>}
+   */
+  save: async (kind) => {
+    const data = await exportAll();
+    let bytes = 0;
+    try { bytes = JSON.stringify(data).length; } catch (e) { bytes = 0; }
+    let included = true;
+    if (bytes > SNAPSHOT_MAX_BYTES && data.stores && data.stores.attachments) {
+      data.stores.attachments = [];
+      included = false;
+      try { bytes = JSON.stringify(data).length; } catch (e) { bytes = 0; }
+    }
+    const id = uid();
+    await put('snapshots', { id: id, kind: kind || 'manual', createdAt: Date.now(), bytes: bytes, attachmentsIncluded: included, data: data });
+    await Snapshots.prune(SNAPSHOT_KEEP);
+    return { id: id, bytes: bytes, attachmentsIncluded: included };
+  },
+  remove: (id) => del('snapshots', id),
+  /** 只保留最近 keep 份 */
+  prune: async (keep) => {
+    const list = await Snapshots.all();
+    const extra = list.slice(keep || SNAPSHOT_KEEP);
+    await Promise.all(extra.map((s) => del('snapshots', s.id)));
+    return extra.length;
+  },
+  /** 用快照整体覆盖当前数据（内部会再存一份 pre-import 快照以便反悔） */
+  restore: async (id) => {
+    const s = await get('snapshots', id);
+    if (!s || !s.data) throw new Error('快照不存在');
+    await Snapshots.save('pre-import'); // 回滚前再留一份，防止反悔
+    const r = await importAll(s.data);
+    return r;
+  }
+};
+
 const Projects = {
   all: () => getAll('projects').then((list) => list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))),
   get: (id) => get('projects', id),
   save: (p) => { p.updatedAt = Date.now(); return put('projects', p); },
-  remove: (id) => Promise.all([queryByIndex('transactions', 'byProject', id), queryByIndex('reminders', 'byProject', id)])
-    .then(([txs, rems]) => {
-      const tasks = [];
-      txs.forEach((t) => { tasks.push(del('transactions', t.id)); if (t.attachmentId) tasks.push(del('attachments', t.attachmentId)); });
-      rems.forEach((r) => tasks.push(del('reminders', r.id)));
-      tasks.push(del('projects', id));
-      return Promise.all(tasks);
-    })
+  // v2.0.0：软删除——项目 + 其流水 + 其节点作为一个 group 进回收站，附件保留以便还原
+  remove: async (id) => {
+    const [p, txs, rems] = await Promise.all([
+      get('projects', id),
+      queryByIndex('transactions', 'byProject', id),
+      queryByIndex('reminders', 'byProject', id)
+    ]);
+    const groupId = uid();
+    if (p) await Trash.put('projects', p, groupId, p.name || '');
+    for (const t of txs) await Trash.put('transactions', t, groupId, t.note || String(t.amount || ''));
+    for (const r of rems) await Trash.put('reminders', r, groupId, r.title || '');
+    await Promise.all(txs.map((t) => del('transactions', t.id)));
+    await Promise.all(rems.map((r) => del('reminders', r.id)));
+    if (p) await del('projects', id);
+  }
 };
 const Transactions = {
   all: () => getAll('transactions').then((list) => list.sort((a, b) => (b.date || '').localeCompare(a.date || ''))),
   byProject: (projectId) => queryByIndex('transactions', 'byProject', projectId),
   get: (id) => get('transactions', id),
   save: (t) => put('transactions', t),
-  remove: (t) => {
-    const tasks = [del('transactions', t.id)];
-    if (t.attachmentId) tasks.push(del('attachments', t.attachmentId));
-    return Promise.all(tasks);
+  // v2.0.0：软删除（附件保留），可批量传入数组
+  remove: async (t) => {
+    const list = Array.isArray(t) ? t : [t];
+    const groupId = uid();
+    for (const one of list) {
+      if (!one) continue;
+      await Trash.put('transactions', one, groupId, one.note || String(one.amount || ''));
+      await del('transactions', one.id);
+    }
   }
 };
 const Parties = {
   all: () => getAll('parties').then((list) => list.sort((a, b) => (a.type || '').localeCompare(b.type || ''))),
   get: (id) => get('parties', id),
   save: (p) => put('parties', p),
-  remove: (id) => del('parties', id)
+  // v2.0.0：软删除
+  remove: async (id) => {
+    const p = await get('parties', id);
+    if (p) await Trash.put('parties', p, uid(), p.name || '');
+    await del('parties', id);
+  }
 };
 const Attachments = {
   get: (id) => get('attachments', id),
@@ -296,6 +417,13 @@ async function exportAll() {
   }
   return out;
 }
+/**
+ * 全量恢复。
+ * v2.0.0 修正：旧实现未 await put() 且忽略单条失败 —— 大批量导入时可能
+ * 在写入完成前就返回「导入成功」，且个别记录失败被静默吞掉。
+ * 现改为逐仓库 await Promise.all + 统计失败条数，返回 { imported, failed }。
+ * 注意：调用方应在导入前先存一份快照（Snapshots.save('pre-import')）以便反悔。
+ */
 async function importAll(data) {
   if (!data || !data.stores) throw new Error('备份文件格式不正确');
   await initBackend();
@@ -303,19 +431,41 @@ async function importAll(data) {
     if (backend === 'idb') await idbReq(idbTx(name, 'readwrite').clear());
     else { _mem[name].recs.clear(); Object.keys(_mem[name].idx).forEach((k) => _mem[name].idx[k].clear()); }
   }
+  let imported = 0, failed = 0;
+  const failures = [];
   for (const name of BACKUP_STORES) {
     const recs = data.stores[name] || [];
-    for (const r of recs) {
-      if (name === 'attachments') {
-        put('attachments', { id: r.id, type: r.type || '', createdAt: r.createdAt || 0, blob: r.b64 ? b64ToBlob(r.b64, r.type) : new Blob([], { type: 'text/plain' }) });
-      } else {
-        put(name, r);
-      }
-    }
+    const tasks = recs.map((r) => {
+      const rec = (name === 'attachments')
+        ? { id: r.id, type: r.type || '', createdAt: r.createdAt || 0, blob: r.b64 ? b64ToBlob(r.b64, r.type) : new Blob([], { type: 'text/plain' }) }
+        : r;
+      return put(name, rec).then(() => { imported++; }).catch((e) => { failed++; if (failures.length < 3) failures.push(name + ':' + (r && r.id) + ':' + (e && e.message)); });
+    });
+    await Promise.all(tasks);
   }
+  if (failed > 0 && imported === 0) throw new Error('导入失败：' + failures.join(' | '));
+  return { imported: imported, failed: failed, failures: failures };
+}
+
+// ---------------- 启动维护（v2.0.0）----------------
+// ① 清理超过保留期的回收站记录；② 距上次自动快照超过 24 小时则存一份
+const AUTO_SNAPSHOT_INTERVAL = 24 * 3600 * 1000;
+async function dbMaintain() {
+  const out = { pruned: 0, snapshot: null };
+  try {
+    out.pruned = await Trash.prune(TRASH_KEEP_DAYS);
+  } catch (e) { /* 回收站清理失败不影响主流程 */ }
+  try {
+    const last = await Meta.get('lastAutoSnapshotAt', 0);
+    if (!last || Date.now() - Number(last) > AUTO_SNAPSHOT_INTERVAL) {
+      out.snapshot = await Snapshots.save('auto');
+      await Meta.set('lastAutoSnapshotAt', Date.now());
+    }
+  } catch (e) { /* 快照失败不阻塞启动 */ }
+  return out;
 }
 
 // 立即启动后端探测（在受限环境会同步切到内存模式并展示演示数据）
 initBackend();
 
-export { openDB, uid, Projects, Transactions, Parties, Attachments, Reminders, Meta, exportAll, importAll };
+export { openDB, uid, Projects, Transactions, Parties, Attachments, Reminders, Meta, Trash, Snapshots, exportAll, importAll, dbMaintain };

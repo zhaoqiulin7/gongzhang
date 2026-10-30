@@ -1,4 +1,4 @@
-import { Projects, Transactions, Parties, Attachments, Reminders, Meta, uid, exportAll, importAll } from './db.js';
+import { Projects, Transactions, Parties, Attachments, Reminders, Meta, Trash, Snapshots, uid, exportAll, importAll, dbMaintain } from './db.js';
 import {
   INCOME_TYPES, EXPENSE_CATS, PAY_METHODS, REGIONS, TRADES, PARTY_TYPES, STATUS_MAP,
   fmtMoney, fmtDate, fmtDateTime, fmtMD, weekdayCN, pad2, ymd, nowHm, timeRanges, rangeOf,
@@ -844,9 +844,11 @@ function batchBar(projects) {
     h('button', { class: 'btn sm ghost', disabled: ids.length ? undefined : 'true', style: ids.length ? '' : 'opacity:.5', onclick: () => { if (!ids.length) { toast('请先勾选流水'); return; } batchMove(ids, projects); } }, '改项目'),
     h('button', { class: 'btn sm danger', style: ids.length ? '' : 'opacity:.5', onclick: () => {
       if (!ids.length) { toast('请先勾选流水'); return; }
-      confirmDialog('删除选中的 ' + ids.length + ' 笔流水（含对应凭证照片）？此操作不可撤销。', () => {
-        Promise.all(ids.map((id) => Transactions.get(id).then((t) => (t ? Transactions.remove(t) : null))))
-          .then(() => { state.ledgerSel = {}; toast('已删除 ' + ids.length + ' 笔'); render(); });
+      confirmDialog('删除选中的 ' + ids.length + ' 笔流水？凭证照片会保留，可在「设置 → 数据安全 → 回收站」30 天内整体还原。', () => {
+        // v2.0.0：整批作为一个 group 入回收站，可一次性还原
+        Promise.all(ids.map((id) => Transactions.get(id)))
+          .then((list) => Transactions.remove(list.filter(Boolean)))
+          .then(() => { state.ledgerSel = {}; toast('已删除 ' + ids.length + ' 笔，可在回收站还原'); render(); });
       }, '批量删除');
     } }, '删除'),
     h('button', { class: 'btn sm ghost', onclick: () => { state.ledgerBatch = false; state.ledgerSel = {}; render(); } }, '退出')
@@ -933,8 +935,8 @@ async function projectDetailView(id) {
         Projects.save(np).then(() => { toast('已创建副本，请修改项目名称'); location.hash = '#/project/' + np.id; projectForm(np); });
       }, '复制项目');
     } }, '⧉ 复制'),
-    h('button', { class: 'btn danger', onclick: () => confirmDialog('删除该项目会一并删除其下所有记账与提醒，确定？', () => {
-      Projects.remove(p.id).then(() => { toast('已删除'); location.hash = '#/projects'; });
+    h('button', { class: 'btn danger', onclick: () => confirmDialog('删除该项目会一并删除其下所有记账与提醒，可在「设置 → 数据安全 → 回收站」30 天内整体还原。确定？', () => {
+      Projects.remove(p.id).then(() => { toast('已删除，可在回收站还原'); location.hash = '#/projects'; });
     }, '删除') }, '删除')
   ]);
   info.appendChild(editBtns);
@@ -1129,7 +1131,7 @@ async function projectDetailView(id) {
         h('div', { class: 'amt ' + (isIncome(t) ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIncome(t) ? '+' : (isTr ? '↔' : '-')) + M(t.amount)),
         locked ? null : h('button', { class: 'edit-x', title: '复制此笔为新记录', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, Object.assign({}, t, { __copy: true, date: today(), time: nowHm() })); } }, '⧉'),
         locked ? null : h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, t); } }, '✎'),
-        locked ? null : h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？', () => { Transactions.remove(t).then(render); }); } }, '×')
+        locked ? null : h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？可在「设置 → 数据安全 → 回收站」30 天内还原。', () => { Transactions.remove(t).then(render); }); } }, '×')
       ].filter(Boolean));
       const row = h('div', { class: 'tx' }, [left, right]);
       if (t.attachmentId) {
@@ -1278,7 +1280,7 @@ function partyCard(p, st, allTxs, allProjects) {
 
   card.appendChild(h('div', { style: 'display:flex;justify-content:flex-end;gap:10px;margin-top:10px' }, [
     h('button', { class: 'btn sm ghost', onclick: (e) => { e.stopPropagation(); partyStatement(p, allTxs, allProjects); } }, '📋 对账单'),
-    h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除该往来单位？', () => { Parties.remove(p.id).then(render); }); } }, '删除')
+    h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除该往来单位？可在「设置 → 数据安全 → 回收站」30 天内还原。', () => { Parties.remove(p.id).then(render); }); } }, '删除')
   ]));
   return card;
 }
@@ -2077,6 +2079,122 @@ async function settingsView() {
   });
   wrap.appendChild(tplCard2);
 
+  // ---------- 数据安全（v2.0.0）：本地快照 + 回收站 ----------
+  const fmtBytes = (n) => {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  };
+  const relTime = (ts) => {
+    ts = Number(ts) || 0; if (!ts) return '从未';
+    const d = Math.max(0, Date.now() - ts);
+    if (d < 60000) return '刚刚';
+    if (d < 3600000) return Math.floor(d / 60000) + ' 分钟前';
+    if (d < 86400000) return Math.floor(d / 3600000) + ' 小时前';
+    return Math.floor(d / 86400000) + ' 天前';
+  };
+  const SNAP_KIND = { auto: { t: '自动', c: 'paid' }, manual: { t: '手动', c: 'ongoing' }, 'pre-import': { t: '导入前', c: 'unpaid' } };
+
+  wrap.appendChild(h('h2', { class: 'section' }, '数据安全'));
+  const dsCard = h('div', { class: 'card' });
+  const lastAuto = await Meta.get('lastAutoSnapshotAt', 0);
+  const snaps = await Snapshots.all();
+  const trashItems = await Trash.all();
+  const dsMsg = h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px;color:var(--income)' });
+
+  dsCard.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'min-width:0' }, [
+      h('div', { style: 'font-weight:600' }, '本地快照'),
+      h('div', { class: 'muted' }, '最近自动备份 ' + relTime(lastAuto) + ' · 共 ' + snaps.length + ' 份（最多保留 7 份）')
+    ]),
+    h('button', { class: 'btn sm primary', style: 'flex:0 0 auto', onclick: async () => {
+      dsMsg.textContent = '正在生成快照…';
+      try {
+        const r = await Snapshots.save('manual');
+        dsMsg.textContent = '✅ 已存快照（' + fmtBytes(r.bytes) + (r.attachmentsIncluded ? '' : '，因体积过大未含凭证照片') + '）';
+        render();
+      } catch (e) { dsMsg.textContent = '❌ 快照失败：' + (e && e.message || e); }
+    } }, '立即备份')
+  ]));
+  dsCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' },
+    '数据存在手机浏览器里，清缓存/换手机会丢失。除导出文件外，App 每 24 小时自动留一份本地快照，导入备份前也会自动留一份，出问题可一键回滚。'));
+
+  if (snaps.length) {
+    const sl = h('div', { style: 'margin-top:10px' });
+    snaps.slice(0, 7).forEach((s) => {
+      const k = SNAP_KIND[s.kind] || { t: s.kind, c: 'stage' };
+      sl.appendChild(h('div', { class: 'row-between', style: 'padding:8px 0;border-top:1px solid var(--border)' }, [
+        h('div', { style: 'min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-md)' }, [
+            h('span', { class: 'tag ' + k.c, style: 'margin-right:6px' }, k.t),
+            relTime(s.createdAt)
+          ]),
+          h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs)' },
+            fmtDateTime(new Date(s.createdAt).toISOString(), new Date(s.createdAt).toTimeString().slice(0, 5)) + ' · ' + fmtBytes(s.bytes) + (s.attachmentsIncluded ? '' : ' · 无凭证'))
+        ]),
+        h('div', { style: 'display:flex;gap:6px;flex:0 0 auto' }, [
+          h('button', { class: 'btn sm ghost', onclick: () => {
+            confirmDialog('将用 ' + relTime(s.createdAt) + '（' + k.t + '）的快照【覆盖当前全部数据】。当前数据会先存一份「导入前」快照，可再次回滚。确定？', async () => {
+              try { await Snapshots.restore(s.id); toast('已回滚，即将刷新'); setTimeout(() => location.reload(), 900); }
+              catch (e) { toast('回滚失败：' + (e && e.message || e)); }
+            }, '回滚到此快照');
+          } }, '回滚'),
+          h('button', { class: 'btn sm ghost', onclick: async () => { await Snapshots.remove(s.id); render(); } }, '删除')
+        ])
+      ]));
+    });
+    dsCard.appendChild(sl);
+  }
+  dsCard.appendChild(dsMsg);
+  wrap.appendChild(dsCard);
+
+  // 回收站
+  const groups = {};
+  trashItems.forEach((it) => { (groups[it.groupId] = groups[it.groupId] || []).push(it); });
+  const gKeys = Object.keys(groups).sort((a, b) => (groups[b][0].deletedAt || 0) - (groups[a][0].deletedAt || 0));
+  const trCard = h('div', { class: 'card' });
+  trCard.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'min-width:0' }, [
+      h('div', { style: 'font-weight:600' }, '回收站'),
+      h('div', { class: 'muted' }, trashItems.length + ' 条（保留 30 天，可整体还原）')
+    ]),
+    trashItems.length ? h('button', { class: 'btn sm ghost', style: 'flex:0 0 auto', onclick: () => {
+      confirmDialog('彻底删除回收站全部 ' + trashItems.length + ' 条记录？此操作不可恢复。', async () => {
+        await Trash.clear(); toast('回收站已清空'); render();
+      }, '彻底清空');
+    } }, '清空') : null
+  ]));
+  if (!gKeys.length) {
+    trCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:8px' }, '暂无被删除的记录。删除的项目/流水/往来会先进这里，30 天内可还原。'));
+  } else {
+    const tl = h('div', { style: 'margin-top:8px' });
+    gKeys.slice(0, 20).forEach((gk) => {
+      const items = groups[gk];
+      const main = items.find((x) => x.store === 'projects') || items.find((x) => x.store === 'parties') || items[0];
+      const txs = items.filter((x) => x.store === 'transactions').length;
+      const name = main.store === 'projects' ? (main.rec.name || '项目')
+        : main.store === 'parties' ? (main.rec.name || '往来单位')
+        : (main.label || '记账 ' + txs + ' 笔');
+      const typeTxt = main.store === 'projects' ? '项目' : main.store === 'parties' ? '往来' : '流水';
+      tl.appendChild(h('div', { class: 'row-between', style: 'padding:8px 0;border-top:1px solid var(--border)' }, [
+        h('div', { style: 'min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-md);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, name),
+          h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs)' }, typeTxt + (txs && main.store === 'projects' ? ' + ' + txs + ' 笔流水' : (main.store === 'transactions' ? ' ' + items.length + ' 笔' : '')) + ' · 删除于 ' + relTime(main.deletedAt))
+        ]),
+        h('div', { style: 'display:flex;gap:6px;flex:0 0 auto' }, [
+          h('button', { class: 'btn sm primary', onclick: async () => {
+            try { const n = await Trash.restore(gk); toast('已还原 ' + n + ' 条记录'); render(); }
+            catch (e) { toast('还原失败：' + (e && e.message || e)); }
+          } }, '还原'),
+          h('button', { class: 'btn sm ghost', onclick: async () => { await Trash.removeGroup(gk); render(); } }, '彻底删除')
+        ])
+      ]));
+    });
+    trCard.appendChild(tl);
+  }
+  wrap.appendChild(trCard);
+
   // 备份与恢复（全量 JSON，含照片凭证）
   const bkCard = h('div', { class: 'card' });
   bkCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '备份与恢复（强烈建议定期备份：数据存在手机浏览器里，清缓存/换手机前务必导出）'));
@@ -2107,11 +2225,17 @@ async function settingsView() {
       try { data = JSON.parse(String(reader.result)); } catch (err) { toast('文件不是有效的备份'); return; }
       if (!data || !data.stores) { toast('文件不是本应用的备份'); return; }
       const n = (data.stores.transactions || []).length;
-      confirmDialog('导入将【清空并覆盖】当前所有数据，用备份里的 ' + n + ' 笔记账替换。确定继续？', async () => {
+      confirmDialog('导入将【清空并覆盖】当前所有数据，用备份里的 ' + n + ' 笔记账替换。导入前会自动存一份当前数据快照，可在「数据安全」里一键回滚。确定继续？', async () => {
         try {
-          await importAll(data);
-          toast('恢复成功，即将刷新');
-          setTimeout(() => location.reload(), 800);
+          // v2.0.0：导入前强制留快照，防止坏备份导致数据无法挽回
+          try { await Snapshots.save('pre-import'); } catch (se) { /* 快照失败不阻断导入 */ }
+          const r = await importAll(data);
+          if (r && r.failed > 0) {
+            toast('已恢复 ' + r.imported + ' 条，其中 ' + r.failed + ' 条失败（可在「数据安全」里回滚到导入前快照）');
+          } else {
+            toast('恢复成功，共 ' + (r ? r.imported : n) + ' 条，即将刷新');
+          }
+          setTimeout(() => location.reload(), 900);
         } catch (err) { toast('恢复失败：' + (err && err.message || err)); }
       }, '覆盖导入');
     };
@@ -2654,9 +2778,11 @@ async function txForm(presetType, presetProject, existingTx, preset) {
     }
     if (isEdit) {
       subBtns.push(h('button', { class: 'btn danger', onclick: () => {
-        confirmDialog('删除这笔记账？', () => {
-          Transactions.remove({ id: existingTx.id, attachmentId: existingTx.attachmentId })
-            .then(() => { toast('已删除'); render(); });
+        confirmDialog('删除这笔记账？可在「设置 → 数据安全 → 回收站」30 天内还原。', () => {
+          // v2.0.0：必须取完整记录再入回收站，否则还原的是残缺数据
+          Transactions.get(existingTx.id)
+            .then((full) => Transactions.remove(full || existingTx))
+            .then(() => { toast('已删除，可在回收站还原'); render(); });
         }, '删除');
       } }, '删除'));
     }
@@ -3056,6 +3182,8 @@ function init() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); notifyStageWarnings(); }
   });
+  // v2.0.0：启动维护——清理过期回收站记录 + 距上次快照超 24h 自动存一份（失败不阻塞启动）
+  dbMaintain().catch(() => {});
 }
 
 init();
