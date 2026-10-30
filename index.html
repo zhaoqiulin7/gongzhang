@@ -946,6 +946,7 @@ async function projectDetailView(id) {
       ]),
       h('div', { style: 'display:flex;gap:6px' }, [
         h('button', { class: 'btn sm ghost', onclick: () => { r.done = !r.done; Reminders.save(r).then(render); } }, r.done ? '↺' : '✓'),
+        h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); reminderForm(id, r); } }, '✎'),
         h('button', { class: 'delete-x', onclick: () => { Reminders.remove(r.id).then(render); } }, '×')
       ])
     ]));
@@ -1491,23 +1492,24 @@ function partyForm(existing) {
 }
 
 // ---------- 表单：收付款节点 ----------
-function reminderForm(projectId) {
-  const r = { id: uid(), projectId, kind: 'receive', done: false };
+function reminderForm(projectId, existing) {
+  const isEdit = !!existing;
+  const r = existing ? Object.assign({}, existing) : { id: uid(), projectId, kind: 'receive', done: false };
   const f = h('div');
   const seg = h('div', { class: 'seg' });
-  const bR = h('button', { class: 'on', onclick: () => { r.kind = 'receive'; bR.classList.add('on'); bP.classList.remove('on'); } }, '收款');
-  const bP = h('button', { onclick: () => { r.kind = 'pay'; bP.classList.add('on'); bR.classList.remove('on'); } }, '付款');
+  const bR = h('button', { class: r.kind === 'receive' ? 'on' : '', onclick: () => { r.kind = 'receive'; bR.classList.add('on'); bP.classList.remove('on'); } }, '收款');
+  const bP = h('button', { class: r.kind === 'pay' ? 'on' : '', onclick: () => { r.kind = 'pay'; bP.classList.add('on'); bR.classList.remove('on'); } }, '付款');
   seg.appendChild(bR); seg.appendChild(bP);
   f.appendChild(h('div', { class: 'field' }, [h('label', {}, '节点类型'), seg]));
-  const title = field(f, '名称（如：二期进度款）', h('input', { placeholder: '选填' }));
-  const due = field(f, '约定日期', h('input', { type: 'date', value: today() }));
-  const amount = field(f, '金额（元，选填）', h('input', { type: 'number', inputmode: 'decimal' }));
+  const title = field(f, '名称（如：二期进度款）', h('input', { value: r.title || '', placeholder: '选填' }));
+  const due = field(f, '约定日期', h('input', { type: 'date', value: fmtDate(r.dueDate) || today() }));
+  const amount = field(f, '金额（元，选填）', h('input', { type: 'number', inputmode: 'decimal', value: r.amount || '' }));
   const save = h('button', { class: 'btn primary', onclick: () => {
     r.title = title.value.trim(); r.dueDate = due.value; r.amount = Number(amount.value) || 0;
-    Reminders.save(r).then(() => { closeModal(); toast('已添加节点'); render(); });
-  } }, '保存');
+    Reminders.save(r).then(() => { closeModal(); toast(isEdit ? '已更新节点' : '已添加节点'); render(); });
+  } }, isEdit ? '保存修改' : '保存');
   const cancel = h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消');
-  openModal('添加收付款节点', f, [cancel, save]);
+  openModal(isEdit ? '编辑收付款节点' : '添加收付款节点', f, [cancel, save]);
 }
 
 // 小工具
