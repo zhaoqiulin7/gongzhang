@@ -1,10 +1,11 @@
-const CACHE = 'decor-accounting-v23';
+const CACHE = 'decor-accounting-v24';
 const ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
   './icon.svg',
   './css/styles.css',
+  './js/demo.js',
   './js/db.js',
   './js/util.js',
   './js/chart.js',

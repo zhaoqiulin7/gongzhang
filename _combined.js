@@ -1,6 +1,72 @@
+// 演示数据（v2.6.0 从 db.js 抽离）
+// 首次启动播种一份演示账本（2 项目 + 5 往来 + 8 流水 + 2 提醒 + 基础配置），
+// 用户可随时「还原演示」或「清空为空白账本」（设置 → 数据安全 → 演示数据）。
+// 这里只定义纯数据；写入逻辑在 db.js（内存模式 memPut 直写 / 统一 put 走 ensureFirstRun）。
+
+function demoDataset() {
+  return {
+    projects: [
+      { id: 'p1', name: '保利香槟 3-1201 王先生', clientName: '王先生', phone: '138****0011', address: '保利香槟 3栋1201', houseType: '三室两厅', buildArea: 89, constructArea: 89, manager: '老陈', designer: '设计部·林', contractAmount: 80000, costBudget: 60000, startDate: '2026-09-01', endDate: '2026-11-30', status: 'ongoing',
+        stages: [ { id: 'p1s1', name: '开工', done: true, date: '2026-09-01', planStart: '2026-09-01', planEnd: '2026-09-02' }, { id: 'p1s2', name: '水电施工', done: true, date: '2026-09-10', planStart: '2026-09-03', planEnd: '2026-09-10' }, { id: 'p1s3', name: '水电验收', done: true, date: '2026-09-18', planStart: '2026-09-11', planEnd: '2026-09-18' }, { id: 'p1s4', name: '泥工进场', done: false, date: '', planStart: '2026-09-19', planEnd: '2026-10-25' }, { id: 'p1s5', name: '木工交底', done: false, date: '', planStart: '2026-10-26', planEnd: '2026-11-15' }, { id: 'p1s6', name: '竣工', done: false, date: '', planStart: '2026-11-16', planEnd: '2026-11-30' } ], planItems: [ { id: 'p1pi1', cat: '泥瓦人工', amount: 30000 }, { id: 'p1pi2', cat: '瓷砖主材', amount: 20000 }, { id: 'p1pi3', cat: '木工人工', amount: 15000 } ] },
+      { id: 'p2', name: '绿地城 5-802 李女士', clientName: '李女士', phone: '139****0022', address: '绿地城 5栋802', houseType: '四室两厅', buildArea: 120, constructArea: 120, manager: '老陈', designer: '设计部·林', contractAmount: 120000, costBudget: 95000, startDate: '2026-10-10', endDate: '2026-12-20', status: 'ongoing',
+        stages: [ { id: 'p2s1', name: '开工', done: false, date: '', planStart: '2026-10-10', planEnd: '2026-10-12' }, { id: 'p2s2', name: '水电施工', done: false, date: '', planStart: '2026-10-13', planEnd: '2026-11-03' }, { id: 'p2s3', name: '水电验收', done: false, date: '', planStart: '2026-11-04', planEnd: '2026-11-10' }, { id: 'p2s4', name: '泥工进场', done: false, date: '', planStart: '2026-11-11', planEnd: '2026-12-05' }, { id: 'p2s5', name: '木工交底', done: false, date: '', planStart: '2026-12-06', planEnd: '2026-12-15' }, { id: 'p2s6', name: '竣工', done: false, date: '', planStart: '2026-12-16', planEnd: '2026-12-20' } ], planItems: [ { id: 'p2pi1', cat: '水电材料', amount: 25000 }, { id: 'p2pi2', cat: '泥瓦人工', amount: 40000 } ] }
+    ],
+
+    parties: [
+      { id: 'pa1', name: '佛山瓷砖批发·陈老板', type: 'supplier', phone: '', note: '主材供应商', payStatus: 'unpaid' },
+      { id: 'pa2', name: '木工·老张', type: 'worker', phone: '', note: '木工班组', payStatus: 'paid' },
+      { id: 'pa3', name: '王先生', type: 'client', phone: '138****0011', note: '保利香槟业主' },
+      { id: 'pa4', name: '施工经理·老陈', type: 'manager', phone: '', note: '现场施工管理', payStatus: 'unpaid' },
+      { id: 'pa5', name: '设计师·林工', type: 'designer', phone: '', note: '设计部', payStatus: 'reconciled' }
+    ],
+
+    transactions: [
+      { id: 't1', projectId: 'p1', type: 'income', subType: '首付款', amount: 40000, date: '2026-09-05', time: '10:20', method: '微信', account: '微信', partyId: 'pa3', partyName: '王先生', note: '开工首付', invoiceStatus: '已开', invoiceType: '普票', taxAmount: 0 },
+      { id: 't2', projectId: 'p1', type: 'income', subType: '进度款', amount: 20000, date: '2026-10-08', time: '15:40', method: '银行转账', account: '银行转账', partyId: 'pa3', partyName: '王先生', note: '水电完工进度款', invoiceStatus: '未开', invoiceType: '普票', taxAmount: 0 },
+      { id: 't3', projectId: 'p1', type: 'expense', category: '材料费', subCat: '主材', amount: 12000, date: '2026-09-20', time: '09:30', method: '银行转账', account: '银行转账', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', region: '厨卫', trade: '泥瓦', material: '瓷砖', note: '卫生间+厨房瓷砖' },
+      { id: 't4', projectId: 'p1', type: 'expense', category: '人工费', subCat: '木工', amount: 8000, date: '2026-10-12', time: '17:05', method: '现金', account: '现金', partyId: 'pa2', partyName: '木工·老张', region: '全屋', trade: '木工', material: '', note: '全屋吊顶木工' },
+      { id: 't5', projectId: 'p2', type: 'expense', category: '材料费', subCat: '主材', amount: 20000, date: '2026-10-15', time: '11:12', method: '银行转账', account: '银行转账', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', region: '客厅', trade: '泥瓦', material: '地砖', note: '客厅地砖' },
+      { id: 't6', projectId: 'p1', type: 'expense', category: '管理费', subCat: '管理人员', amount: 3000, date: '2026-10-20', time: '09:00', method: '现金', account: '现金', partyId: 'pa4', partyName: '施工经理·老陈', region: '全屋', trade: '其他', material: '', note: '施工管理费' },
+      { id: 't7', projectId: 'p1', type: 'expense', category: '管理费', subCat: '设计费', amount: 5000, date: '2026-10-22', time: '14:30', method: '银行转账', account: '银行转账', partyId: 'pa5', partyName: '设计师·林工', region: '全屋', trade: '其他', material: '', note: '设计费' },
+      { id: 't8', projectId: 'p1', type: 'transfer', amount: 5000, date: '2026-10-23', time: '10:10', method: '银行转账', account: '银行转账', fromAccount: '银行转账', toAccount: '现金', note: '从银行转现金备用金' }
+    ],
+
+    reminders: [
+      { id: 'r1', projectId: 'p1', kind: 'receive', title: '尾款催收', amount: 20000, dueDate: '2026-11-25', note: '竣工验收后收尾款' },
+      { id: 'r2', projectId: 'p1', kind: 'pay', title: '瓷砖尾款', amount: 5000, dueDate: '2026-11-02', note: '付陈老板瓷砖尾款' }
+    ],
+
+    metaEntries: [
+      { key: 'remindDays', value: 3 },
+      { key: 'stageTemplate', value: [ { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' }, { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' } ] },
+      { key: 'accounts', value: [
+        { id: 'acc-1', name: '现金', opening: 0, note: '' },
+        { id: 'acc-2', name: '微信', opening: 0, note: '' },
+        { id: 'acc-3', name: '支付宝', opening: 0, note: '' },
+        { id: 'acc-4', name: '银行转账', opening: 0, note: '公司对公账户' }
+      ] },
+      { key: 'catTree', value: [
+        { id: 'c1', name: '材料费', subs: [ { id: 'c1-1', name: '辅材' }, { id: 'c1-2', name: '主材' }, { id: 'c1-3', name: '五金' }, { id: 'c1-4', name: '水电材料' }, { id: 'c1-5', name: '瓷砖主材' } ] },
+        { id: 'c2', name: '人工费', subs: [ { id: 'c2-1', name: '水电工' }, { id: 'c2-2', name: '泥工' }, { id: 'c2-3', name: '木工' }, { id: 'c2-4', name: '油漆工' }, { id: 'c2-5', name: '安装工' }, { id: 'c2-6', name: '水电人工' }, { id: 'c2-7', name: '泥瓦人工' }, { id: 'c2-8', name: '木工人工' }, { id: 'c2-9', name: '油漆人工' } ] },
+        { id: 'c3', name: '分包费', subs: [ { id: 'c3-1', name: '整包' }, { id: 'c3-2', name: '零包' } ] },
+        { id: 'c4', name: '管理费', subs: [ { id: 'c4-1', name: '设计费' }, { id: 'c4-2', name: '管理人员' }, { id: 'c4-3', name: '其他' } ] },
+        { id: 'c5', name: '其他', subs: [ { id: 'c5-1', name: '其他' }, { id: 'c5-2', name: '垃圾清运' } ] }
+      ] },
+      { key: 'txTemplates', value: [
+        { id: 'tp1', name: '瓷砖主材', type: 'expense', amount: 0, category: '材料费', note: '' },
+        { id: 'tp2', name: '泥工人工', type: 'expense', amount: 0, category: '人工费', note: '' },
+        { id: 'tp3', name: '进度款收款', type: 'income', amount: 0, category: '', note: '' }
+      ] }
+    ]
+  };
+}
+
+/* ===== db ===== */
 // 数据层：自动在 IndexedDB（手机/正常浏览器，可持久化）与
 // 内存模式（受限预览环境，载入演示数据、不保存）之间降级。
 // 对外暴露与旧版一致的 API，app.js 无需改动。
+
+
 
 const DB_NAME = 'decor-accounting';
 // v2（v2.0.0）：新增 snapshots（自动/导入前快照）与 trash（回收站）两个仓库
@@ -124,7 +190,7 @@ function initBackend() {
       _backendSettled = true;
       backend = 'mem';
       _mem = makeMem();
-      try { seedDemo(); } catch (e) { /* ignore */ }
+      try { seedDemoMem(); } catch (e) { /* ignore */ }
       try { showBanner(); } catch (e) { /* ignore */ }
       resolve();
     };
@@ -159,58 +225,64 @@ function showBanner() {
   if (document.body) document.body.insertBefore(b, document.body.firstChild);
 }
 
-// ---------------- 演示数据（仅内存模式） ----------------
-function seedDemo() {
+// ---------------- 演示数据（v2.6.0：数据定义抽到 js/demo.js，这里只负责写入） ----------------
+// 内存模式：同步直写（在 initBackend 完成前就绪，保证首屏渲染前数据已就位）
+function seedDemoMem() {
+  const D = demoDataset();
   const now = Date.now();
-  const P = (o) => memPut('projects', Object.assign({ createdAt: now, updatedAt: now }, o));
-  const T = (o) => memPut('transactions', Object.assign({ createdAt: now, attachmentId: null }, o));
-  const PA = (o) => memPut('parties', Object.assign({ createdAt: now }, o));
-  const R = (o) => memPut('reminders', Object.assign({ createdAt: now, done: false }, o));
-
-  P({ id: 'p1', name: '保利香槟 3-1201 王先生', clientName: '王先生', phone: '138****0011', address: '保利香槟 3栋1201', houseType: '三室两厅', buildArea: 89, constructArea: 89, manager: '老陈', designer: '设计部·林', contractAmount: 80000, costBudget: 60000, startDate: '2026-09-01', endDate: '2026-11-30', status: 'ongoing',
-    stages: [ { id: 'p1s1', name: '开工', done: true, date: '2026-09-01', planStart: '2026-09-01', planEnd: '2026-09-02' }, { id: 'p1s2', name: '水电施工', done: true, date: '2026-09-10', planStart: '2026-09-03', planEnd: '2026-09-10' }, { id: 'p1s3', name: '水电验收', done: true, date: '2026-09-18', planStart: '2026-09-11', planEnd: '2026-09-18' }, { id: 'p1s4', name: '泥工进场', done: false, date: '', planStart: '2026-09-19', planEnd: '2026-10-25' }, { id: 'p1s5', name: '木工交底', done: false, date: '', planStart: '2026-10-26', planEnd: '2026-11-15' }, { id: 'p1s6', name: '竣工', done: false, date: '', planStart: '2026-11-16', planEnd: '2026-11-30' } ], planItems: [ { id: 'p1pi1', cat: '泥瓦人工', amount: 30000 }, { id: 'p1pi2', cat: '瓷砖主材', amount: 20000 }, { id: 'p1pi3', cat: '木工人工', amount: 15000 } ] });
-  P({ id: 'p2', name: '绿地城 5-802 李女士', clientName: '李女士', phone: '139****0022', address: '绿地城 5栋802', houseType: '四室两厅', buildArea: 120, constructArea: 120, manager: '老陈', designer: '设计部·林', contractAmount: 120000, costBudget: 95000, startDate: '2026-10-10', endDate: '2026-12-20', status: 'ongoing',
-    stages: [ { id: 'p2s1', name: '开工', done: false, date: '', planStart: '2026-10-10', planEnd: '2026-10-12' }, { id: 'p2s2', name: '水电施工', done: false, date: '', planStart: '2026-10-13', planEnd: '2026-11-03' }, { id: 'p2s3', name: '水电验收', done: false, date: '', planStart: '2026-11-04', planEnd: '2026-11-10' }, { id: 'p2s4', name: '泥工进场', done: false, date: '', planStart: '2026-11-11', planEnd: '2026-12-05' }, { id: 'p2s5', name: '木工交底', done: false, date: '', planStart: '2026-12-06', planEnd: '2026-12-15' }, { id: 'p2s6', name: '竣工', done: false, date: '', planStart: '2026-12-16', planEnd: '2026-12-20' } ], planItems: [ { id: 'p2pi1', cat: '水电材料', amount: 25000 }, { id: 'p2pi2', cat: '泥瓦人工', amount: 40000 } ] });
-
-  PA({ id: 'pa1', name: '佛山瓷砖批发·陈老板', type: 'supplier', phone: '', note: '主材供应商', payStatus: 'unpaid' });
-  PA({ id: 'pa2', name: '木工·老张', type: 'worker', phone: '', note: '木工班组', payStatus: 'paid' });
-  PA({ id: 'pa3', name: '王先生', type: 'client', phone: '138****0011', note: '保利香槟业主' });
-  PA({ id: 'pa4', name: '施工经理·老陈', type: 'manager', phone: '', note: '现场施工管理', payStatus: 'unpaid' });
-  PA({ id: 'pa5', name: '设计师·林工', type: 'designer', phone: '', note: '设计部', payStatus: 'reconciled' });
-
-  T({ id: 't1', projectId: 'p1', type: 'income', subType: '首付款', amount: 40000, date: '2026-09-05', time: '10:20', method: '微信', account: '微信', partyId: 'pa3', partyName: '王先生', note: '开工首付', invoiceStatus: '已开', invoiceType: '普票', taxAmount: 0 });
-  T({ id: 't2', projectId: 'p1', type: 'income', subType: '进度款', amount: 20000, date: '2026-10-08', time: '15:40', method: '银行转账', account: '银行转账', partyId: 'pa3', partyName: '王先生', note: '水电完工进度款', invoiceStatus: '未开', invoiceType: '普票', taxAmount: 0 });
-  T({ id: 't3', projectId: 'p1', type: 'expense', category: '材料费', subCat: '主材', amount: 12000, date: '2026-09-20', time: '09:30', method: '银行转账', account: '银行转账', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', region: '厨卫', trade: '泥瓦', material: '瓷砖', note: '卫生间+厨房瓷砖' });
-  T({ id: 't4', projectId: 'p1', type: 'expense', category: '人工费', subCat: '木工', amount: 8000, date: '2026-10-12', time: '17:05', method: '现金', account: '现金', partyId: 'pa2', partyName: '木工·老张', region: '全屋', trade: '木工', material: '', note: '全屋吊顶木工' });
-  T({ id: 't5', projectId: 'p2', type: 'expense', category: '材料费', subCat: '主材', amount: 20000, date: '2026-10-15', time: '11:12', method: '银行转账', account: '银行转账', partyId: 'pa1', partyName: '佛山瓷砖批发·陈老板', region: '客厅', trade: '泥瓦', material: '地砖', note: '客厅地砖' });
-  T({ id: 't6', projectId: 'p1', type: 'expense', category: '管理费', subCat: '管理人员', amount: 3000, date: '2026-10-20', time: '09:00', method: '现金', account: '现金', partyId: 'pa4', partyName: '施工经理·老陈', region: '全屋', trade: '其他', material: '', note: '施工管理费' });
-  T({ id: 't7', projectId: 'p1', type: 'expense', category: '管理费', subCat: '设计费', amount: 5000, date: '2026-10-22', time: '14:30', method: '银行转账', account: '银行转账', partyId: 'pa5', partyName: '设计师·林工', region: '全屋', trade: '其他', material: '', note: '设计费' });
-  T({ id: 't8', projectId: 'p1', type: 'transfer', amount: 5000, date: '2026-10-23', time: '10:10', method: '银行转账', account: '银行转账', fromAccount: '银行转账', toAccount: '现金', note: '从银行转现金备用金' });
-
-  R({ id: 'r1', projectId: 'p1', kind: 'receive', title: '尾款催收', amount: 20000, dueDate: '2026-11-25', note: '竣工验收后收尾款' });
-  R({ id: 'r2', projectId: 'p1', kind: 'pay', title: '瓷砖尾款', amount: 5000, dueDate: '2026-11-02', note: '付陈老板瓷砖尾款' });
-
-  memPut('meta', { key: 'remindDays', value: 3 });
-  memPut('meta', { key: 'stageTemplate', value: [ { id: 's1', name: '开工' }, { id: 's2', name: '水电施工' }, { id: 's3', name: '水电验收' }, { id: 's4', name: '泥工进场' }, { id: 's5', name: '木工交底' }, { id: 's6', name: '竣工' } ] });
-  memPut('meta', { key: 'accounts', value: [
-    { id: 'acc-1', name: '现金', opening: 0, note: '' },
-    { id: 'acc-2', name: '微信', opening: 0, note: '' },
-    { id: 'acc-3', name: '支付宝', opening: 0, note: '' },
-    { id: 'acc-4', name: '银行转账', opening: 0, note: '公司对公账户' }
-  ] });
-  memPut('meta', { key: 'catTree', value: [
-    { id: 'c1', name: '材料费', subs: [ { id: 'c1-1', name: '辅材' }, { id: 'c1-2', name: '主材' }, { id: 'c1-3', name: '五金' }, { id: 'c1-4', name: '水电材料' }, { id: 'c1-5', name: '瓷砖主材' } ] },
-    { id: 'c2', name: '人工费', subs: [ { id: 'c2-1', name: '水电工' }, { id: 'c2-2', name: '泥工' }, { id: 'c2-3', name: '木工' }, { id: 'c2-4', name: '油漆工' }, { id: 'c2-5', name: '安装工' }, { id: 'c2-6', name: '水电人工' }, { id: 'c2-7', name: '泥瓦人工' }, { id: 'c2-8', name: '木工人工' }, { id: 'c2-9', name: '油漆人工' } ] },
-    { id: 'c3', name: '分包费', subs: [ { id: 'c3-1', name: '整包' }, { id: 'c3-2', name: '零包' } ] },
-    { id: 'c4', name: '管理费', subs: [ { id: 'c4-1', name: '设计费' }, { id: 'c4-2', name: '管理人员' }, { id: 'c4-3', name: '其他' } ] },
-    { id: 'c5', name: '其他', subs: [ { id: 'c5-1', name: '其他' }, { id: 'c5-2', name: '垃圾清运' } ] }
-  ] });
-  memPut('meta', { key: 'txTemplates', value: [
-    { id: 'tp1', name: '瓷砖主材', type: 'expense', amount: 0, category: '材料费', note: '' },
-    { id: 'tp2', name: '泥工人工', type: 'expense', amount: 0, category: '人工费', note: '' },
-    { id: 'tp3', name: '进度款收款', type: 'income', amount: 0, category: '', note: '' }
-  ] });
+  D.projects.forEach((o) => memPut('projects', Object.assign({ createdAt: now, updatedAt: now }, o)));
+  D.parties.forEach((o) => memPut('parties', Object.assign({ createdAt: now }, o)));
+  D.transactions.forEach((o) => memPut('transactions', Object.assign({ createdAt: now, attachmentId: null }, o)));
+  D.reminders.forEach((o) => memPut('reminders', Object.assign({ createdAt: now, done: false }, o)));
+  D.metaEntries.forEach((m) => memPut('meta', Object.assign({}, m)));
+  memPut('meta', { key: 'demoMode', value: true });
+  memPut('meta', { key: 'initialized', value: true });
 }
+
+// 统一播种（IndexedDB 首启 / Demo.reset 用；走异步 put 接口，两种后端通用）
+async function seedAll(mode) {
+  const D = demoDataset();
+  const now = Date.now();
+  if (mode === 'demo') {
+    for (const o of D.projects) await put('projects', Object.assign({ createdAt: now, updatedAt: now }, o));
+    for (const o of D.parties) await put('parties', Object.assign({ createdAt: now }, o));
+    for (const o of D.transactions) await put('transactions', Object.assign({ createdAt: now, attachmentId: null }, o));
+    for (const o of D.reminders) await put('reminders', Object.assign({ createdAt: now, done: false }, o));
+  }
+  for (const m of D.metaEntries) await put('meta', Object.assign({}, m));
+}
+
+// 首次启动：播种演示账本（内存模式已在 initBackend 里同步播种并打标，这里只补 IndexedDB 分支）
+async function ensureFirstRun() {
+  await initBackend();
+  const initialized = await Meta.get('initialized', false);
+  if (initialized) return false;
+  if (backend !== 'mem') {
+    await seedAll('demo');
+    await Meta.set('demoMode', true);
+  }
+  await Meta.set('initialized', true);
+  return true;
+}
+
+// 演示/空白 重置（v2.6.0）：清空全部业务数据与配置后重播；调用方应先存快照
+const Demo = {
+  /** mode: 'demo' 还原演示账本 | 'blank' 清空为空白账本（保留基础配置） */
+  async reset(mode) {
+    await initBackend();
+    const theme = await Meta.get('theme', 'paper');
+    const hideMoney = await Meta.get('hideMoney', false);
+    for (const name of ['projects', 'transactions', 'parties', 'attachments', 'reminders', 'meta']) {
+      if (backend === 'idb') await idbReq(idbTx(name, 'readwrite').clear());
+      else { _mem[name].recs.clear(); Object.keys(_mem[name].idx).forEach((k) => _mem[name].idx[k].clear()); }
+    }
+    await seedAll(mode === 'demo' ? 'demo' : 'blank');
+    await Meta.set('theme', theme);
+    await Meta.set('hideMoney', hideMoney);
+    await Meta.set('demoMode', mode === 'demo');
+    await Meta.set('initialized', true);
+  }
+};
 
 // ---------------- 对外 API ----------------
 // ---------------- 回收站（v2.0.0）----------------
@@ -984,7 +1056,11 @@ const state = {
   statsForm: 'bar', statsTrend: 'line', statsCat: 'all',
   // 统计下钻：{label, ids[]} 锁定一组流水，交给流水页精确展示
   ledgerDrill: null,
-  reconStatus: 'all', ledgerCustom: null
+  reconStatus: 'all', ledgerCustom: null,
+  // v2.6.0：流水页展开详情的流水 id（null=全部收起）
+  ledgerExpand: null,
+  // v2.6.0：项目详情页展开详情的流水 id
+  projExpand: null
 };
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
@@ -1319,6 +1395,7 @@ async function render() {
   else if (route === 'mine') node = await mineView();
   else if (route === 'settings') node = await settingsView();
   else if (route === 'stats') node = await statsView();
+  else if (route === 'forecast') node = await forecastView();
   else if (route === 'ledger') {
     if (parts[1] && rangeOf(parts[1]).key === parts[1]) state.ledgerRange = parts[1];
     node = await ledgerView();
@@ -1359,7 +1436,9 @@ function setupFab(route, pid) {
 // ---------- 首页 ----------
 async function homeView() {
   setPageTitle('装修记账');
-  const [projects, txs, rems] = await Promise.all([Projects.all(), Transactions.all(), Reminders.all()]);
+  const [projects, txs, rems, isDemo] = await Promise.all([
+    Projects.all(), Transactions.all(), Reminders.all(), Meta.get('demoMode', false)
+  ]);
   let income = 0, expense = 0;
   txs.forEach((t) => {
     if (isIncome(t)) income += Number(t.amount) || 0;
@@ -1371,6 +1450,18 @@ async function homeView() {
   });
 
   const wrap = h('div');
+
+  // v2.6.0：演示模式提示卡
+  if (isDemo) {
+    wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-style:dashed' }, [
+      h('div', { style: 'min-width:0' }, [
+        h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '🎬 演示数据体验中'),
+        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '记账/项目都是示例，可一键换成空白账本')
+      ]),
+      h('button', { class: 'btn sm primary', style: 'flex:0 0 auto', onclick: () => { location.hash = '#/settings'; } }, '开始记账')
+    ]));
+  }
+
   wrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
     h('h2', { class: 'section', style: 'margin:0' }, '总览（累计）'),
     h('button', { class: 'eye-btn', title: '隐藏/显示金额', onclick: () => { state.hideMoney = !state.hideMoney; Meta.set('hideMoney', state.hideMoney).then(render); } }, state.hideMoney ? '🙈' : '👁')
@@ -1384,10 +1475,29 @@ async function homeView() {
     stat('待付', M(payDue), 'expense', () => drillDue('pay'))
   ]));
 
+  // v2.6.0：周期记账待确认（到期未处理的固定收支）
+  try {
+    const cyPend = await cyclePending();
+    if (cyPend.length) {
+      wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px' }, [
+        h('div', { class: 'row-between' }, [
+          h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '🔁 周期记账 · ' + cyPend.length + ' 期待确认'),
+          h('button', { class: 'btn sm ghost', onclick: () => cyclePendingModal() }, '去处理')
+        ]),
+        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:2px' },
+          cyPend.slice(0, 3).map((pd) => fmtMD(pd.date) + ' ' + (pd.item.name || '') + ' ' + (pd.item.type === 'income' ? '+' : '-') + M(pd.item.amount)).join(' · ')
+          + (cyPend.length > 3 ? ' 等' : '') + '，点确认才入账')
+      ]));
+    }
+  } catch (e) { /* 周期记账失败不影响首页 */ }
+
   // 按时间维度汇总（点击下钻到流水页）
   wrap.appendChild(h('div', { class: 'row-between', style: 'margin:4px 0 12px' }, [
     h('h2', { class: 'section', style: 'margin:0' }, '按时间维度'),
-    h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/stats'; } }, '统计报表 ›')
+    h('div', { style: 'display:flex;gap:8px;flex:0 0 auto' }, [
+      h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/forecast'; } }, '📈 资金预测'),
+      h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/stats'; } }, '统计报表 ›')
+    ])
   ]));
   const timeCard = h('div', { class: 'card' });
   timeRangeSummary(txs).forEach((it) => {
@@ -1799,6 +1909,16 @@ async function ledgerView() {
     } }, '清除全部筛选并显示所有时间'));
     wrap.appendChild(es);
   } else {
+    // v2.6.0：流水行点击展开详情面板（复用对账单详情 + 改单内核）
+    const ledgerCtx = {
+      projects: projects, pname: pname, partyId: null, savedMsg: '已更新',
+      reopen: (id, msg) => {
+        const y = window.scrollY;
+        state.ledgerExpand = id || null;
+        render().then(() => { window.scrollTo(0, y); if (msg) toast(msg); });
+      }
+    };
+    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-4px 2px 8px' }, '点击任意流水可展开详情，直接改金额 / 日期 / 备注'));
     const byYear = {};
     list.forEach((t) => {
       const d = fmtDate(t.date);
@@ -1825,7 +1945,7 @@ async function ledgerView() {
       Object.keys(months).sort().reverse().forEach((mo) => {
         const mCard = h('div', { class: 'card' });
         mCard.appendChild(h('div', { class: 'month-head' }, Number(mo) + ' 月'));
-        months[mo].forEach((t) => mCard.appendChild(ledgerRow(t, pname)));
+        months[mo].forEach((t) => mCard.appendChild(ledgerRow(t, pname, ledgerCtx)));
         wrap.appendChild(mCard);
       });
     });
@@ -1834,7 +1954,7 @@ async function ledgerView() {
   return wrap;
 }
 
-function ledgerRow(t, pname) {
+function ledgerRow(t, pname, ctx) {
   const isIn = isIncome(t), isOut = isExpense(t);
   const batch = state.ledgerBatch;
   const isSel = !!state.ledgerSel[t.id];
@@ -1869,11 +1989,33 @@ function ledgerRow(t, pname) {
   const right = h('div', { style: 'display:flex;align-items:center;gap:6px;flex:0 0 auto' }, [
     h('div', { class: 'amt ' + cls }, sign + M(t.amount).replace('¥', '¥')),
     batch ? null : h('button', { class: 'edit-x', title: '复制此笔为新记录', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, Object.assign({}, t, { __copy: true, date: today(), time: nowHm() })); } }, '⧉'),
-    batch ? null : h('button', { class: 'edit-x', title: '编辑', onclick: () => txForm(null, t.projectId, t) }, '✎')
+    batch ? null : h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, t); } }, '✎')
   ].filter(Boolean));
   const rowNode = h('div', { class: 'tx' + (isSel ? ' sel' : '') + (batch ? ' batch' : '') }, [left, right]);
-  if (batch) rowNode.addEventListener('click', () => { state.ledgerSel[t.id] = !state.ledgerSel[t.id]; render(); });
-  return rowNode;
+  if (batch) {
+    rowNode.addEventListener('click', () => { state.ledgerSel[t.id] = !state.ledgerSel[t.id]; render(); });
+    return rowNode;
+  }
+  // v2.6.0：非批量模式下点击行展开/收起详情面板（复用对账单详情 + 统一改单内核）
+  const open = state.ledgerExpand === t.id;
+  rowNode.classList.add('tx-click');
+  if (open) rowNode.classList.add('open');
+  rowNode.title = '点击展开/收起流水详情';
+  rowNode.addEventListener('click', (e) => {
+    if (e.target.closest && e.target.closest('.edit-x')) return; // 复制/直接编辑按钮不触发展开
+    expandLedgerRow(open ? null : t.id);
+  });
+  const item = h('div', { class: 'tx-item' });
+  item.appendChild(rowNode);
+  if (open && ctx) item.appendChild(txDetailPanel(t, ctx));
+  return item;
+}
+
+// v2.6.0：展开/收起流水详情后重渲染并保持滚动位置
+function expandLedgerRow(id) {
+  const y = window.scrollY;
+  state.ledgerExpand = id;
+  render().then(() => { window.scrollTo(0, y); });
 }
 
 // 近 6 个月收支趋势（纯 CSS 柱状，点击下方说明无操作）
@@ -2272,11 +2414,21 @@ async function projectDetailView(id) {
   });
   wrap.appendChild(remCard);
 
-  // 交易流水
+  // 交易流水（v2.6.0：点击行展开详情面板，内联快改/完整编辑/删除；锁定项目仍只读）
   wrap.appendChild(h('h2', { class: 'section' }, '记账流水'));
   const txs = await Transactions.byProject(id);
   if (!txs.length) wrap.appendChild(emptyState('还没有记账', '点右下角 + 记一笔'));
   else {
+    if (!locked) wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-4px 2px 8px' }, '点击任意流水可展开详情，直接改金额 / 日期 / 备注'));
+    const pdCtx = {
+      projects: [p], pname: (pid) => (pid === id ? p.name : '未关联项目'),
+      partyId: null, savedMsg: '已更新',
+      reopen: (txId, msg) => {
+        const y = window.scrollY;
+        state.projExpand = txId || null;
+        render().then(() => { window.scrollTo(0, y); if (msg) toast(msg); });
+      }
+    };
     const list = h('div', { class: 'card' });
     for (const t of txs) {
       const isTr = isTransfer(t);
@@ -2292,14 +2444,29 @@ async function projectDetailView(id) {
         h('div', { class: 'amt ' + (isIncome(t) ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIncome(t) ? '+' : (isTr ? '↔' : '-')) + M(t.amount)),
         locked ? null : h('button', { class: 'edit-x', title: '复制此笔为新记录', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, Object.assign({}, t, { __copy: true, date: today(), time: nowHm() })); } }, '⧉'),
         locked ? null : h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); txForm(null, t.projectId, t); } }, '✎'),
-        locked ? null : h('button', { class: 'delete-x', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？可在「设置 → 数据安全 → 回收站」30 天内还原。', () => { Transactions.remove(t).then(render); }); } }, '×')
+        locked ? null : h('button', { class: 'delete-x', title: '删除', onclick: (e) => { e.stopPropagation(); confirmDialog('删除这笔记账？可在「设置 → 数据安全 → 回收站」30 天内还原。', () => { Transactions.get(t.id).then((full) => Transactions.remove(full || t)).then(render); }); } }, '×')
       ].filter(Boolean));
       const row = h('div', { class: 'tx' }, [left, right]);
       if (t.attachmentId) {
         const url = await attURL(t.attachmentId);
         if (url) row.insertBefore(h('img', { class: 'thumb', src: url }), right);
       }
-      list.appendChild(row);
+      const item = h('div', { class: 'tx-item' });
+      item.appendChild(row);
+      if (!locked) {
+        const open = state.projExpand === t.id;
+        row.classList.add('tx-click');
+        if (open) row.classList.add('open');
+        row.title = '点击展开/收起流水详情';
+        row.addEventListener('click', (e) => {
+          if (e.target.closest && e.target.closest('.edit-x')) return;
+          const y = window.scrollY;
+          state.projExpand = open ? null : t.id;
+          render().then(() => { window.scrollTo(0, y); });
+        });
+        if (open) item.appendChild(txDetailPanel(t, pdCtx));
+      }
+      list.appendChild(item);
     }
     wrap.appendChild(list);
   }
@@ -2843,14 +3010,19 @@ function txDetailPanel(t, ctx) {
     saveBtn.disabled = true; saveBtn.textContent = '保存中…';
     const r = await applyTxPatch(t.id, patch);
     if (!r.ok) { saveBtn.disabled = false; saveBtn.textContent = '💾 保存修改'; toast(r.msg); return; }
-    ctx.reopen(t.id, '已更新，对账单已同步');
+    ctx.reopen(t.id, ctx.savedMsg || '已更新，对账单已同步');
   } }, '💾 保存修改');
   acts.appendChild(saveBtn);
   acts.appendChild(h('button', { class: 'btn sm ghost', onclick: () => {
     txForm(null, t.projectId, t, null, {
       onSaved: (saved) => {
-        const moved = saved && saved.partyId !== ctx.partyId;
-        ctx.reopen(moved ? null : (saved && saved.id), moved ? '该流水已改挂到其他往来单位，已从本对账单移出' : '已保存，对账单已同步');
+        // 对账单场景（ctx.partyId 有值）：改挂到其他单位时提示并移出；列表场景：普通刷新
+        if (ctx.partyId != null) {
+          const moved = saved && saved.partyId !== ctx.partyId;
+          ctx.reopen(moved ? null : (saved && saved.id), moved ? '该流水已改挂到其他往来单位，已从本对账单移出' : '已保存，对账单已同步');
+        } else {
+          ctx.reopen(saved && saved.id, '已保存');
+        }
       }
     });
   } }, '✎ 完整编辑'));
@@ -3554,6 +3726,296 @@ function truncStr(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, 
 
 // ---------- 我的（v1.9.0）：核心资产数字 + 资产看板 + 统计概览 + 设置入口聚合 ----------
 // 底部 tab「我的」；「设置」降为二级页（#/settings 全部功能保留），从本页入口进入。
+// ---------- 资金缺口预测（v2.6.0 B1）----------
+// 口径：当前账户余额（期初+收−支+转账互抵，同「我的」页）为基数；
+// 未来 8 周的确定性应收/应付 = 未完成的收付款提醒（逾期未办的并入本周）。
+// 每周滚动结算：周末余额 = 上周末余额 + 本周收 − 本周付；转负即缺口预警。
+async function forecastView() {
+  setPageTitle('资金预测');
+  const [txs, accounts, rems] = await Promise.all([Transactions.all(), getAccounts(), Reminders.all()]);
+  const wrap = h('div');
+
+  // 当前余额（与「我的」页同口径）
+  const bal = {};
+  accounts.forEach((a) => { bal[a.name] = Number(a.opening) || 0; });
+  txs.forEach((t) => {
+    const amt = Number(t.amount) || 0;
+    if (isTransfer(t)) {
+      if (bal[t.fromAccount] != null) bal[t.fromAccount] -= amt;
+      if (bal[t.toAccount] != null) bal[t.toAccount] += amt;
+    } else if (isIncome(t)) { if (bal[t.account] != null) bal[t.account] += amt; }
+    else if (isExpense(t)) { if (bal[t.account] != null) bal[t.account] -= amt; }
+  });
+  let total = 0;
+  accounts.forEach((a) => { total += bal[a.name] || 0; });
+
+  // 8 周桶（w0 = 今天起到第 7 天）
+  const td = today();
+  const weeks = [];
+  {
+    const base = new Date(td + 'T00:00:00');
+    for (let i = 0; i < 8; i++) {
+      const f = new Date(base); f.setDate(f.getDate() + i * 7);
+      const to = new Date(f); to.setDate(to.getDate() + 6);
+      weeks.push({
+        from: f.getFullYear() + '-' + pad2(f.getMonth() + 1) + '-' + pad2(f.getDate()),
+        to: to.getFullYear() + '-' + pad2(to.getMonth() + 1) + '-' + pad2(to.getDate()),
+        in: 0, out: 0, items: []
+      });
+    }
+  }
+  const weekOf = (d) => {
+    if (d < weeks[0].from) return 0; // 逾期并入本周
+    for (let i = 0; i < 8; i++) { if (d >= weeks[i].from && d <= weeks[i].to) return i; }
+    return -1; // 8 周外
+  };
+  let laterN = 0, laterIn = 0, laterOut = 0;
+  const pend = rems.filter((r) => !r.done);
+  pend.forEach((r) => {
+    if (!r.dueDate) return;
+    const amt = Number(r.amount) || 0;
+    const w = weekOf(fmtDate(r.dueDate));
+    if (w < 0) { laterN++; if (r.kind === 'receive') laterIn += amt; else laterOut += amt; return; }
+    if (r.kind === 'receive') weeks[w].in += amt; else weeks[w].out += amt;
+    weeks[w].items.push({ r: r, amt: amt, overdue: fmtDate(r.dueDate) < td });
+  });
+
+  // 滚动余额
+  let running = total;
+  weeks.forEach((w) => { running += w.in - w.out; w.end = running; });
+  const gapWeek = weeks.findIndex((w) => w.end < 0);
+  const maxEnd = Math.max(0, weeks[7].end);
+
+  // 汇总卡
+  const sumCard = h('div', { class: 'card sum-card' });
+  sumCard.appendChild(h('div', { class: 'sum-label' }, '当前总余额 · 未来 8 周预测'));
+  sumCard.appendChild(h('div', { class: 'sum-main' }, [h('span', { class: 'sum-k' }, ''), h('span', { class: 'sum-v', style: weeks[7].end < 0 ? 'color:var(--expense)' : '' }, M(weeks[7].end))]));
+  sumCard.appendChild(h('div', { class: 'sum-sub' }, '预计收 +' + M(weeks.reduce((s, w) => s + w.in, 0)) + ' ｜ 预计付 -' + M(weeks.reduce((s, w) => s + w.out, 0))));
+  wrap.appendChild(sumCard);
+
+  // 缺口预警条
+  if (gapWeek >= 0) {
+    const g = weeks[gapWeek];
+    const short = -g.end;
+    wrap.appendChild(h('div', { class: 'card', style: 'border:1px solid var(--expense);background:var(--surface)' }, [
+      h('div', { style: 'font-weight:700;color:var(--expense)' }, '⚠️ 缺口预警：第 ' + (gapWeek + 1) + ' 周余额预计转负'),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:4px' },
+        fmtMD(g.from) + '～' + fmtMD(g.to) + ' 结束时余额约 ' + M(g.end) + '，资金缺口 ' + M(short) + '。可提前催收「收」节点、或把非紧急支出错开到回款后。')
+    ]));
+  } else {
+    wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px;display:flex;align-items:center;gap:8px' }, [
+      h('span', { style: 'font-weight:700;color:var(--income)' }, '✅ 未来 8 周无缺口'),
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm);flex:1;min-width:0' }, '按当前余额与已录入收付款节点滚动测算')
+    ]));
+  }
+
+  // 余额走势（9 个点：当前 + 8 个周末）
+  wrap.appendChild(h('h2', { class: 'section' }, '余额走势（周）'));
+  const lineCard = h('div', { class: 'card' });
+  lineCard.appendChild(lineChart({
+    labels: ['现在'].concat(weeks.map((w, i) => 'W' + (i + 1))),
+    h: 150,
+    series: [
+      { name: '周末余额', color: 'var(--accent)', area: true, data: [total].concat(weeks.map((w) => w.end)) }
+    ]
+  }));
+  lineCard.appendChild(h('div', { class: 'chart-caption' }, '跌到 0 轴以下 = 该周出现资金缺口'));
+  wrap.appendChild(lineCard);
+
+  // 每周明细
+  wrap.appendChild(h('h2', { class: 'section' }, '每周现金流'));
+  const wCard = h('div', { class: 'card', style: 'padding:4px 14px' });
+  weeks.forEach((w, i) => {
+    const gap = w.end < 0;
+    wCard.appendChild(h('div', { style: 'padding:10px 0' + (i < 7 ? ';border-bottom:1px solid var(--border)' : '') }, [
+      h('div', { class: 'row-between' }, [
+        h('div', { style: 'min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
+            h('span', { class: 'tag ' + (gap ? 'unpaid' : 'paid'), style: 'margin-right:6px' }, gap ? '缺口' : 'W' + (i + 1)),
+            document.createTextNode(fmtMD(w.from) + '～' + fmtMD(w.to))
+          ]),
+          h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' },
+            '收 +' + M(w.in) + ' · 付 -' + M(w.out) + ' · 净 ' + M(w.in - w.out) + (w.items.length ? ' · ' + w.items.length + ' 个节点' : ''))
+        ]),
+        h('div', { class: 'amt ' + (w.end < 0 ? 'expense' : '') }, M(w.end))
+      ]),
+      w.items.length ? h('div', { style: 'margin-top:6px;display:flex;flex-direction:column;gap:3px' },
+        w.items.map((it) => h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);display:flex;gap:6px;align-items:baseline' }, [
+          h('span', { class: 'tag ' + (it.r.kind === 'receive' ? 'paid' : 'unpaid'), style: 'font-size:var(--g-fs-xs)' }, it.r.kind === 'receive' ? '收' : '付'),
+          h('span', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' },
+            fmtMD(fmtDate(it.r.dueDate)) + ' ' + (it.r.title || '未命名') + (it.overdue ? '（已逾期，按本周测算）' : '')),
+          h('span', { class: 'amt ' + (it.r.kind === 'receive' ? 'income' : 'expense'), style: 'font-size:var(--g-fs-sm)' },
+            (it.r.kind === 'receive' ? '+' : '-') + M(it.amt))
+        ]))) : null
+    ]));
+  });
+  wrap.appendChild(wCard);
+
+  if (laterN) {
+    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:8px 2px 0' },
+      '另有 ' + laterN + ' 个节点在 8 周外（收 ' + M(laterIn) + ' / 付 ' + M(laterOut) + '），未计入上图。'));
+  }
+  wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:var(--g-fs-sm);line-height:1.7;margin-top:10px' },
+    '💰 预测只统计「已录入的收付款节点」（项目详情 → 收付款节点）。把确定的收款/付款都录成节点，预测才准；逾期未办的节点按本周测算。'));
+  return wrap;
+}
+
+// ---------- 周期记账（v2.6.0 B2）----------
+// 固定周期收支（房租/工资/月供等）：到期生成「待确认」条目，用户点确认才真正入账。
+// meta.cycleItems: [{id,name,type:'expense'|'income',amount,account,category,partyName,day(1-28),note,startDate,active}]
+// meta.cycleDone:  { [itemId]: { [ym]: { status:'ok'|'skip', txId } } }（已入账/已跳过的月份）
+
+async function getCycleItems() { return Meta.get('cycleItems', []); }
+
+// 计算当前所有待确认条目：从开始月份到本月，每月一期（day 大于当月天数时取月末），
+// 已确认/已跳过的月份不再生成；occurrence 日期晚于今天的也不算到期。
+async function cyclePending() {
+  const items = (await getCycleItems()).filter((x) => x.active !== false);
+  const done = await Meta.get('cycleDone', {});
+  const td = today();
+  const out = [];
+  items.forEach((it) => {
+    const startM = (fmtDate(it.startDate) || td).slice(0, 7) || td.slice(0, 7);
+    let y = Number(startM.slice(0, 4)), m = Number(startM.slice(5, 7));
+    const cy = Number(td.slice(0, 4)), cm = Number(td.slice(5, 7));
+    let guard = 0;
+    while ((y < cy || (y === cy && m <= cm)) && guard++ < 240) {
+      const ym = y + '-' + pad2(m);
+      const lastDay = new Date(y, m, 0).getDate();
+      const day = Math.min(Math.max(1, Number(it.day) || 1), lastDay);
+      const occ = y + '-' + pad2(m) + '-' + pad2(day);
+      if (occ <= td && !(done[it.id] && done[it.id][ym])) out.push({ item: it, ym: ym, date: occ });
+      m++; if (m > 12) { m = 1; y++; }
+    }
+  });
+  out.sort((a, b) => a.date.localeCompare(b.date) || (a.item.name || '').localeCompare(b.item.name || ''));
+  return out;
+}
+
+async function markCycleDone(itemId, ym, status, txId) {
+  const done = await Meta.get('cycleDone', {});
+  done[itemId] = done[itemId] || {};
+  done[itemId][ym] = { status: status || 'ok', txId: txId || '' };
+  await Meta.set('cycleDone', done);
+}
+
+// 确认入账：按周期项生成一笔正式流水（收入记 subType，支出记 category）
+async function confirmCycleTx(pd, amountOverride) {
+  const it = pd.item;
+  const amt = Number(amountOverride != null ? amountOverride : it.amount) || 0;
+  if (!(amt > 0)) { toast('金额必须大于 0'); return null; }
+  const t = {
+    id: uid(), type: it.type, amount: amt, date: pd.date, time: nowHm(),
+    account: it.account || '', method: it.account || '',
+    category: it.type === 'expense' ? (it.category || '') : '',
+    subType: it.type === 'income' ? (it.category || '') : '',
+    partyName: it.partyName || '',
+    note: ((it.note ? it.note + ' · ' : '') + it.name + '（周期 ' + pd.ym + '）').trim(),
+    createdAt: Date.now()
+  };
+  await Transactions.save(t);
+  await markCycleDone(it.id, pd.ym, 'ok', t.id);
+  return t;
+}
+
+// 单条待确认的行内操作：确认入账 / 改后入账 / 本期跳过
+async function cycleAct(pd, action, onDone) {
+  if (action === 'ok') {
+    const t = await confirmCycleTx(pd);
+    if (t) { toast('已入账 ' + M(t.amount) + '（' + pd.date + '）'); if (onDone) onDone(); }
+  } else if (action === 'skip') {
+    await markCycleDone(pd.item.id, pd.ym, 'skip');
+    toast('本期已跳过，下期到期待确认');
+    if (onDone) onDone();
+  } else if (action === 'edit') {
+    const it = pd.item;
+    txForm(it.type, '', null, {
+      type: it.type, amount: it.amount, category: it.category || '',
+      subType: it.type === 'income' ? (it.category || '') : '',
+      account: it.account || '', note: (it.name + '（周期 ' + pd.ym + '）'),
+      date: pd.date
+    }, {
+      onSaved: async (saved) => {
+        await markCycleDone(it.id, pd.ym, 'ok', saved && saved.id);
+        toast('已按修改入账并登记本期');
+        if (onDone) onDone();
+      }
+    });
+  }
+}
+
+// 待确认处理弹窗（设置页 / 首页共用）
+async function cyclePendingModal() {
+  let list = await cyclePending();
+  const body = h('div');
+  const renderList = () => {
+    body.innerHTML = '';
+    if (!list.length) {
+      body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);text-align:center;padding:14px 0' }, '没有待确认的周期收支 🎉'));
+      return;
+    }
+    body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '每一期都要你点「入账」才会成为正式流水；金额每次都可以改。'));
+    list.forEach((pd) => {
+      const it = pd.item;
+      body.appendChild(h('div', { class: 'tx' }, [
+        h('div', { style: 'min-width:0;flex:1' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' },
+            (it.type === 'income' ? '收·' : '支·') + (it.name || '未命名')),
+          h('div', { class: 'meta' }, fmtDate(pd.date) + (weekdayCN(pd.date) ? ' ' + weekdayCN(pd.date) : '') + (it.account ? ' · ' + it.account : ''))
+        ]),
+        h('div', { style: 'display:flex;align-items:center;gap:6px;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end' }, [
+          h('div', { class: 'amt ' + (it.type === 'income' ? 'income' : 'expense') }, (it.type === 'income' ? '+' : '-') + M(it.amount)),
+          h('button', { class: 'btn sm primary', onclick: async () => { await cycleAct(pd, 'ok'); list = await cyclePending(); renderList(); } }, '✓ 入账'),
+          h('button', { class: 'btn sm ghost', onclick: () => { cycleAct(pd, 'edit', async () => { closeModal(); list = await cyclePending(); renderList(); }); } }, '改后入账'),
+          h('button', { class: 'btn sm ghost', onclick: async () => { await cycleAct(pd, 'skip'); list = await cyclePending(); renderList(); } }, '跳过')
+        ])
+      ]));
+    });
+  };
+  renderList();
+  openModal('周期记账 · 待确认（' + list.length + '）', body, [
+    h('button', { class: 'btn primary', onclick: () => { closeModal(); render(); } }, '完成')
+  ]);
+}
+
+// 周期项新增/编辑表单
+async function cycleForm(it, onSaved) {
+  const accounts = await getAccounts();
+  const f = h('div');
+  const name = field(f, '名称', h('input', { value: it.name || '', placeholder: '如：办公室房租' }));
+  const typeWrap = h('div', { class: 'field' }, [h('label', {}, '类型')]);
+  const seg = h('div', { class: 'seg' });
+  const bEx = h('button', { class: it.type !== 'income' ? 'on' : '', onclick: () => { it.type = 'expense'; bEx.classList.add('on'); bIn.classList.remove('on'); } }, '支出');
+  const bIn = h('button', { class: it.type === 'income' ? 'on' : '', onclick: () => { it.type = 'income'; bIn.classList.add('on'); bEx.classList.remove('on'); } }, '收入');
+  seg.appendChild(bEx); seg.appendChild(bIn);
+  typeWrap.appendChild(seg); f.appendChild(typeWrap);
+  const amount = field(f, '每期金额（元）', h('input', { type: 'number', inputmode: 'decimal', value: it.amount || '' }));
+  const day = field(f, '每月几号（1-28，月末自动取最后一日）', h('input', { type: 'number', min: '1', max: '28', value: it.day || 1 }));
+  const start = field(f, '开始月份（从该月起每月生成待确认）', h('input', { type: 'month', value: (fmtDate(it.startDate) || today()).slice(0, 7) }));
+  const acct = field(f, '账户', (() => {
+    const s = h('select', {}, [h('option', { value: '' }, '不指定')].concat(accounts.map((a) => h('option', { value: a.name }, a.name))));
+    if (it.account) s.value = it.account;
+    return s;
+  })());
+  const cat = field(f, '分类（支出）/ 款项类型（收入）', h('input', { value: it.category || '', placeholder: '如：管理费 / 进度款' }));
+  const party = field(f, '往来单位（选填）', h('input', { value: it.partyName || '', placeholder: '如：物业公司' }));
+  const note = field(f, '备注（选填）', h('input', { value: it.note || '' }));
+  const save = h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+    it.name = name.value.trim(); if (!it.name) { toast('请填名称'); return; }
+    it.amount = Number(amount.value) || 0; if (!(it.amount > 0)) { toast('金额必须大于 0'); return; }
+    it.day = Math.min(28, Math.max(1, Number(day.value) || 1));
+    it.startDate = (start.value || today().slice(0, 7)) + '-01';
+    it.account = acct.value; it.category = cat.value.trim(); it.partyName = party.value.trim(); it.note = note.value.trim();
+    Meta.get('cycleItems', []).then((list) => {
+      const idx = list.findIndex((x) => x.id === it.id);
+      if (idx >= 0) list[idx] = it; else list.push(it);
+      Meta.set('cycleItems', list).then(() => { closeModal(); toast('已保存周期项'); if (onSaved) onSaved(); });
+    });
+  } }, '保存周期项');
+  f.appendChild(save);
+  openModal(it.id ? '编辑周期项' : '添加周期项', f, [h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消')]);
+}
+
 async function mineView() {
   setPageTitle('我的');
   const [txs, accounts, projects] = await Promise.all([Transactions.all(), getAccounts(), Projects.all()]);
@@ -3632,7 +4094,8 @@ async function mineView() {
   wrap.appendChild(h('h2', { class: 'section' }, '更多'));
   [['⚙️ 系统设置', '#/settings', '提醒预警 · 外观主题 · 账户 · 分类 · 模板 · 备份'],
    ['🤝 往来单位管理', '#/parties', '往来单位增删改维护'],
-   ['📊 统计报表', '#/stats', '多维拆解 · 月度走势 · 导出']
+   ['📊 统计报表', '#/stats', '多维拆解 · 月度走势 · 导出'],
+   ['📈 资金缺口预测', '#/forecast', '未来 8 周现金流 · 缺口预警']
   ].forEach(([t, hsh, sub]) => {
     wrap.appendChild(h('div', { class: 'list-item party-clickable', onclick: () => { location.hash = hsh; } }, [
       h('div', { style: 'min-width:0' }, [
@@ -3889,6 +4352,49 @@ async function settingsView() {
   });
   wrap.appendChild(tplCard2);
 
+  // ---------- 周期记账（v2.6.0）：固定收支到期生成待确认，点确认才入账 ----------
+  wrap.appendChild(h('h2', { class: 'section' }, '周期记账'));
+  const cyCard = h('div', { class: 'card' });
+  const cyItems = await getCycleItems();
+  const cyPending = await cyclePending();
+  cyCard.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'min-width:0' }, [
+      h('div', { style: 'font-weight:600' }, '固定周期收支（房租/工资/月供等）'),
+      h('div', { class: 'muted' }, '到期生成「待确认」，你点确认才入账 · 当前待确认 ' + cyPending.length + ' 期')
+    ]),
+    cyPending.length ? h('button', { class: 'btn sm primary', style: 'flex:0 0 auto', onclick: () => cyclePendingModal() }, '去处理') : null
+  ]));
+  const cyList = h('div', { style: 'margin-top:8px' });
+  if (!cyItems.length) {
+    cyList.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '还没有周期项。点下方「+ 添加周期项」，比如每月 5 号房租 8000。'));
+  } else {
+    cyItems.forEach((it) => {
+      cyList.appendChild(h('div', { class: 'row-between', style: 'padding:8px 0;border-top:1px solid var(--border)' }, [
+        h('div', { style: 'min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-md)' }, [
+            h('span', { class: 'tag ' + (it.type === 'income' ? 'paid' : 'unpaid'), style: 'margin-right:6px' }, it.type === 'income' ? '收' : '支'),
+            document.createTextNode((it.name || '未命名') + (it.active === false ? '（已停用）' : ''))
+          ]),
+          h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs)' },
+            '每月 ' + (it.day || 1) + ' 日 · ' + M(it.amount) + (it.account ? ' · ' + it.account : '') + (it.category ? ' · ' + it.category : ''))
+        ]),
+        h('div', { style: 'display:flex;gap:6px;flex:0 0 auto' }, [
+          h('button', { class: 'btn sm ghost', onclick: () => cycleForm(it, render) }, '编辑'),
+          h('button', { class: 'btn sm ghost', onclick: async () => { it.active = it.active === false; await Meta.set('cycleItems', cyItems); render(); } }, it.active === false ? '启用' : '停用'),
+          h('button', { class: 'btn sm ghost', onclick: () => {
+            confirmDialog('删除周期项「' + (it.name || '') + '」？已入账的流水不受影响，仅不再生成新的待确认。', async () => {
+              const rest = cyItems.filter((x) => x.id !== it.id);
+              await Meta.set('cycleItems', rest); render();
+            }, '删除');
+          } }, '删除')
+        ])
+      ]));
+    });
+  }
+  cyCard.appendChild(cyList);
+  cyCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:8px', onclick: () => cycleForm({ id: uid(), type: 'expense', day: 1, active: true }, render) }, '+ 添加周期项'));
+  wrap.appendChild(cyCard);
+
   // ---------- 数据安全（v2.0.0）：本地快照 + 回收站 ----------
   const fmtBytes = (n) => {
     n = Number(n) || 0;
@@ -4004,6 +4510,36 @@ async function settingsView() {
     trCard.appendChild(tl);
   }
   wrap.appendChild(trCard);
+
+  // 演示数据（v2.6.0）：还原演示 / 清空为空白账本，两种操作前都自动存快照
+  const isDemo = await Meta.get('demoMode', false);
+  const demoCard = h('div', { class: 'card' });
+  demoCard.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'min-width:0' }, [
+      h('div', { style: 'font-weight:600' }, '演示数据'),
+      h('div', { class: 'muted' }, isDemo
+        ? '当前是演示账本（内置 2 个项目、8 笔流水），点击下方按钮换成自己的空白账本'
+        : '正式账本。可以把数据重置为内置演示账本（给客户演示 / 体验功能）')
+    ]),
+    h('span', { class: 'tag ' + (isDemo ? 'finished' : 'paid'), style: 'flex:0 0 auto' }, isDemo ? '演示中' : '正式')
+  ]));
+  demoCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, [
+    h('button', { class: 'btn ghost', onclick: () => {
+      confirmDialog('将【清空当前全部数据】并重置为内置演示账本（' + (isDemo ? '重新播种' : '当前为正式账本，重置前会自动存一份快照') + '）。确定？', async () => {
+        try { await Snapshots.save('pre-import'); } catch (se) { /* 快照失败不阻断 */ }
+        try { await Demo.reset('demo'); toast('已还原演示数据，即将刷新'); setTimeout(() => location.reload(), 900); }
+        catch (e) { toast('重置失败：' + (e && e.message || e)); }
+      }, '还原演示');
+    } }, '🎬 还原演示数据'),
+    h('button', { class: 'btn ' + (isDemo ? 'primary' : 'ghost'), onclick: () => {
+      confirmDialog('将【清空当前全部数据】换成空白账本（保留账户/分类等基础配置；' + (isDemo ? '演示数据不会进回收站' : '重置前会自动存一份快照') + '）。确定？', async () => {
+        try { await Snapshots.save('pre-import'); } catch (se) { /* 快照失败不阻断 */ }
+        try { await Demo.reset('blank'); toast('已清空为空白账本，即将刷新'); setTimeout(() => location.reload(), 900); }
+        catch (e) { toast('清空失败：' + (e && e.message || e)); }
+      }, isDemo ? '开始记账' : '清空数据');
+    } }, isDemo ? '🧹 清空演示，开始记账' : '🧹 清空为空白账本')
+  ]));
+  wrap.appendChild(demoCard);
 
   // 备份与恢复（全量 JSON，含照片凭证）
   const bkCard = h('div', { class: 'card' });
@@ -4369,8 +4905,9 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
     return [h('option', { value: '' }, emptyLabel)].concat(list.map((p) => h('option', { value: p.id }, p.name)));
   }
   function dtValue(t) {
-    const d = fmtDate(t && t.date) || today();
-    const tm = (t && t.time) || nowHm();
+    // v2.6.0：preset.date/preset.time 支持（周期记账「改后入账」预填到期日）
+    const d = fmtDate(t && t.date) || (preset && preset.date) || today();
+    const tm = (t && t.time) || (preset && preset.time) || nowHm();
     return d + 'T' + tm;
   }
   function micBtn(target) {
@@ -5035,6 +5572,11 @@ function init() {
   });
   // v2.0.0：启动维护——清理过期回收站记录 + 距上次快照超 24h 自动存一份（失败不阻塞启动）
   dbMaintain().catch(() => {});
+  // v2.6.0：首次启动播种演示账本（IndexedDB 分支；内存模式已在 db.js 同步播种）。
+  // 播种是异步的，完成后必须补一次渲染，否则首屏会停留在「空账本」直到用户手动切页。
+  ensureFirstRun().then((first) => {
+    if (first) { toast('已载入演示数据，可在「我的 → 设置 → 数据安全」清空开始记账'); render(); }
+  }).catch(() => {});
 }
 
 init();
