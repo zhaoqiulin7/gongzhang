@@ -108,6 +108,10 @@
   --c-tab-h: 58px;
   /* @deprecated v1.7.0 旧名兼容别名 → 用 --c-tab-h；计划 v1.9 移除 */
   --tab-h: var(--c-tab-h);
+  /* v2.5.0：对账单流水详情面板（.tdp）私有色 */
+  --c-tdp-bg: rgba(44, 95, 74, .055);
+  --c-tdp-bd: rgba(44, 95, 74, .16);
+  --c-tdp-tag-bg: rgba(44, 95, 74, .12);
 }
 
 /* ============================================================
@@ -148,6 +152,10 @@ html[data-theme="dark"] {
   --chart-6: #57c3bf;
   --chart-7: #d3a06a;
   --chart-8: #9bb0a4;
+  /* v2.5.0：详情面板在深底上改用提亮的绿调 */
+  --c-tdp-bg: rgba(76, 175, 120, .09);
+  --c-tdp-bd: var(--g-c-green-800);
+  --c-tdp-tag-bg: var(--g-c-green-a18);
 }
 
 /* 暖纸纹理：极低透明度颗粒覆盖（不影响交互，深色下更弱） */
@@ -411,6 +419,37 @@ textarea.ctl { resize: vertical; min-height: 44px; }
 /* 批量管理 */
 .tx.batch { cursor: pointer; }
 .tx.sel { background: var(--row-sel-bg); border-radius: var(--g-r-md); }
+
+/* ============================================================
+   v2.5.0 对账单流水详情：点击明细行展开（.tx-item/.tx-chev）+ 内联改单面板（.tdp）
+   ============================================================ */
+.tx-item { display: block; }
+.tx.tx-click { cursor: pointer; }
+.tx.tx-click:active { opacity: .65; }
+.tx.open { background: var(--row-sel-bg); border-radius: var(--g-r-md); padding-left: var(--g-sp-2); padding-right: var(--g-sp-2); }
+.tx-chev { color: var(--text-dim); font-size: var(--g-fs-xl); flex: 0 0 auto; transition: transform .15s ease; }
+.tx-chev.on { transform: rotate(90deg); color: var(--primary); }
+
+.tdp { background: var(--c-tdp-bg); border: 1px solid var(--c-tdp-bd); border-radius: var(--g-r-md); padding: var(--g-sp-3); margin: var(--g-sp-1) 0 var(--g-sp-3); }
+.tdp-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--g-sp-2); padding-bottom: var(--g-sp-2); border-bottom: 1px dashed var(--c-tdp-bd); }
+.tdp-amt { font-size: var(--g-fs-2xl); font-weight: 800; line-height: 1.15; }
+.tdp-amt.income { color: var(--income); }
+.tdp-amt.expense { color: var(--expense); }
+.tdp-amt.transfer { color: var(--info); }
+.tdp-type { flex: 0 0 auto; font-size: var(--g-fs-sm); font-weight: 700; color: var(--text-dim); background: var(--c-tdp-tag-bg); border-radius: var(--g-r-pill); padding: var(--g-sp-c2) var(--g-sp-c10); }
+.tdp-grid { display: flex; flex-wrap: wrap; gap: var(--g-sp-c3) var(--g-sp-3); margin-top: var(--g-sp-2); }
+.tdp-kv { flex: 1 1 46%; min-width: 130px; min-height: 0; }
+.tdp-kv.full { flex: 1 1 100%; }
+.tdp-k { font-size: var(--g-fs-sm); color: var(--text-dim); }
+.tdp-v { font-size: var(--g-fs-md); word-break: break-all; }
+.tdp-sec { margin-top: var(--g-sp-3); }
+.tdp-att { width: 100%; max-height: 34vh; object-fit: contain; border-radius: var(--g-r-sm); margin-top: var(--g-sp-c3); background: var(--surface-2); }
+.tdp-edit { margin-top: var(--g-sp-3); padding-top: var(--g-sp-2); border-top: 1px solid var(--c-tdp-bd); }
+.tdp-f { display: flex; align-items: center; gap: var(--g-sp-2); margin-top: var(--g-sp-2); }
+.tdp-f > label { flex: 0 0 48px; font-size: var(--g-fs-md); color: var(--text-dim); }
+.tdp-f > .ctl { flex: 1; min-width: 0; }
+.tdp-acts { display: flex; flex-wrap: wrap; gap: var(--g-sp-2); margin-top: var(--g-sp-3); }
+.tdp-acts .btn { flex: 1 1 auto; min-width: 104px; white-space: nowrap; }
 .batch-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(560px, calc(100% - 24px)); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: var(--g-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: var(--g-sp-c10) var(--g-sp-3); display: flex; gap: var(--g-sp-2); align-items: center; z-index: var(--g-z-float); }
 
 /* ============================================================

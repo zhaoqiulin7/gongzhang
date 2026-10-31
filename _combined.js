@@ -1153,6 +1153,93 @@ function isTransfer(t) { return t.type === 'transfer'; }
 // 金额显示（支持隐藏金额开关）
 function M(n) { return state.hideMoney ? '¥****' : fmtMoney(n); }
 
+/* ============================================================
+   v2.5.0：流水改单的统一校验与合并内核
+   对账单详情、记账表单两条改单路径共用，保证「校验规则一致、
+   不丢字段、不用陈旧对象覆盖新数据」。
+   ============================================================ */
+
+// 某类型专属字段。改单时其它类型的专属字段必须清掉，
+// 否则会出现「收入 · 材料费」「支出 · 发票类型」这类串味数据。
+const TX_TYPE_FIELDS = {
+  expense: ['category', 'subCat', 'region', 'trade', 'material', 'planCat', 'memberId', 'memberName', 'merchantId', 'merchantName'],
+  income: ['subType', 'invoiceStatus', 'invoiceType', 'taxAmount'],
+  transfer: ['fromAccount', 'toAccount']
+};
+
+function txForeignFields(type) {
+  const out = [];
+  Object.keys(TX_TYPE_FIELDS).forEach((k) => {
+    if (k !== type) out.push.apply(out, TX_TYPE_FIELDS[k]);
+  });
+  return out;
+}
+
+// 日期真实性校验：格式 YYYY-MM-DD 且是真实存在的日期（拒绝 2026-02-31）
+function isRealDate(d) {
+  if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const p = d.split('-').map(Number);
+  const dt = new Date(p[0], p[1] - 1, p[2]);
+  return dt.getFullYear() === p[0] && dt.getMonth() === p[1] - 1 && dt.getDate() === p[2];
+}
+
+// 字段级校验：返回空串表示通过，否则返回可直接提示用户的中文原因
+function validateTxPatch(patch) {
+  if (patch.amount !== undefined) {
+    const n = Number(patch.amount);
+    if (patch.amount === '' || patch.amount == null || !isFinite(n)) return '金额必须是数字';
+    if (n <= 0) return '金额必须大于 0';
+    if (n > 1e11) return '金额超出可记录范围（≤ 1000 亿）';
+  }
+  if (patch.date !== undefined && !isRealDate(patch.date)) return '日期无效，应为 YYYY-MM-DD 且真实存在';
+  if (patch.time !== undefined && patch.time !== '' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(patch.time))) return '时间无效，应为 HH:MM';
+  if (patch.note !== undefined && String(patch.note).length > 200) return '备注最多 200 字';
+  if (patch.type !== undefined && !TX_TYPE_FIELDS[patch.type]) return '流水类型无效';
+  return '';
+}
+
+// 把「表单/详情面板构造出的新对象」安全落到「库里最新记录」上：
+// ① 清掉其它类型的专属字段；② 保留表单不管理的字段（如 attachmentId、planCat）
+function mergeTxKeepUnknown(fresh, next) {
+  const type = next.type || (fresh && fresh.type) || 'expense';
+  const out = {};
+  if (fresh) {
+    Object.keys(fresh).forEach((k) => { out[k] = fresh[k]; });
+  }
+  txForeignFields(type).forEach((k) => { delete out[k]; });
+  Object.keys(next).forEach((k) => {
+    if (next[k] === undefined) return;
+    out[k] = next[k];
+  });
+  out.type = type;
+  out.id = (fresh && fresh.id) || next.id;
+  out.createdAt = (fresh && fresh.createdAt) || next.createdAt || Date.now();
+  out.updatedAt = Date.now();
+  return out;
+}
+
+// 唯一改单出口：先读最新记录（防止用详情页里的陈旧快照覆盖已变更数据），
+// 再校验、再合并，最后落库。返回 { ok, tx, before } 或 { ok:false, msg }
+async function applyTxPatch(txId, patch) {
+  const fresh = await Transactions.get(txId);
+  if (!fresh) return { ok: false, msg: '该流水已被删除，请刷新后重试' };
+  const err = validateTxPatch(patch);
+  if (err) return { ok: false, msg: err };
+  const merged = mergeTxKeepUnknown(fresh, patch);
+  await Transactions.save(merged);
+  return { ok: true, tx: merged, before: fresh };
+}
+
+// 弹窗滚动位置保持：展开/收起/改单后重建对账单，不让用户丢失阅读位置
+function modalScrollTop() {
+  const m = document.querySelector('#modal-root .modal');
+  return m ? m.scrollTop : 0;
+}
+function restoreModalScrollTop(v) {
+  const m = document.querySelector('#modal-root .modal');
+  if (m && v) m.scrollTop = v;
+}
+
 async function projStats(pid) {
   const txs = await Transactions.byProject(pid);
   let income = 0, expense = 0;
@@ -2427,7 +2514,9 @@ function partyCard(p, st, allTxs, allProjects) {
 }
 
 // 往来对账单：某单位全部流水 + 分类小计 + 一键标记付款状态
-function partyStatement(p, allTxs, allProjects) {
+// v2.5.0：opts.expandId 指定展开哪条流水详情；opts.scrollTop 用于重建后恢复阅读位置
+function partyStatement(p, allTxs, allProjects, optsIn) {
+  const opts = optsIn || {};
   const rel = allTxs.filter((t) => t.partyId === p.id)
     .slice().sort((a, b) => (fmtDate(b.date) + (b.time || '')).localeCompare(fmtDate(a.date) + (a.time || '')));
   const pname = (id) => { const x = allProjects.find((p2) => p2.id === id); return x ? x.name : '未关联项目'; };
@@ -2527,19 +2616,37 @@ function partyStatement(p, allTxs, allProjects) {
     body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '账单已达 9 张上限，请先删除部分再上传'));
   }
 
+  // v2.5.0：明细行可点击展开详情并直接改单；改单后一律走 reopenStatement 从库里重建
+  const ctx = {
+    p: p, partyId: p.id, projects: allProjects, pname: pname,
+    reopen: (expandId, msg) => reopenStatement(p.id, expandId, msg)
+  };
   body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '流水明细（' + rel.length + ' 笔）'));
-  if (!rel.length) body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' }, '该单位暂无流水'));
-  rel.forEach((t) => {
-    const isIn = isIncome(t), isTr = isTransfer(t);
-    const title = isTr ? '转账' : (isIn ? (t.subType || '收入') : ((t.category || '') + (t.subCat ? '·' + t.subCat : '')));
-    body.appendChild(h('div', { class: 'tx' }, [
-      h('div', {}, [
-        h('div', {}, title),
-        h('div', { class: 'meta' }, fmtDate(t.date) + ' · ' + pname(t.projectId) + (t.note ? ' · ' + t.note : ''))
-      ]),
-      h('div', { class: 'amt ' + (isIn ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIn ? '+' : (isTr ? '↔' : '-')) + M(t.amount))
-    ]));
-  });
+  if (!rel.length) {
+    body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' }, '该单位暂无流水'));
+  } else {
+    body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:-2px' }, '点击任意一条可展开详情，直接改金额 / 日期 / 备注'));
+    rel.forEach((t) => {
+      const isIn = isIncome(t), isTr = isTransfer(t);
+      const open = opts.expandId === t.id;
+      const title = isTr ? '转账' : (isIn ? (t.subType || '收入') : ((t.category || '') + (t.subCat ? '·' + t.subCat : '')));
+      const item = h('div', { class: 'tx-item' });
+      const row = h('div', { class: 'tx tx-click' + (open ? ' open' : ''), title: '点击展开/收起流水详情' }, [
+        h('div', { style: 'min-width:0;flex:1' }, [
+          h('div', { style: 'font-weight:600' }, title),
+          h('div', { class: 'meta' }, fmtDate(t.date) + ' · ' + pname(t.projectId) + (t.note ? ' · ' + t.note : ''))
+        ]),
+        h('div', { style: 'display:flex;align-items:center;gap:6px;flex:0 0 auto' }, [
+          h('div', { class: 'amt ' + (isIn ? 'income' : (isTr ? 'transfer' : 'expense')) }, (isIn ? '+' : (isTr ? '↔' : '-')) + M(t.amount)),
+          h('span', { class: 'tx-chev' + (open ? ' on' : '') }, '›')
+        ])
+      ]);
+      row.addEventListener('click', () => reopenStatement(p.id, open ? null : t.id));
+      item.appendChild(row);
+      if (open) item.appendChild(txDetailPanel(t, ctx));
+      body.appendChild(item);
+    });
+  }
   // v2.2.0：生成对账单纯文本（可直接发微信催款/核对）；金额沿用 M() 以尊重「隐藏金额」设置
   const buildStatementText = () => {
     const L = [];
@@ -2606,6 +2713,157 @@ function partyStatement(p, allTxs, allProjects) {
     } }, '✅ 对账完成，标记已对账'));
   }
   openModal('往来对账单', body, acts);
+  if (opts.scrollTop) restoreModalScrollTop(opts.scrollTop);
+}
+
+// v2.5.0：改单/展开后重建对账单——一律从库里重读，保证合计、分类小计、项目小计、
+// 复制文本与底层对账列表全部同步；同时保留展开项与滚动位置。
+async function reopenStatement(partyId, expandId, msg) {
+  const st = modalScrollTop();
+  const [np, txs, projects] = await Promise.all([Parties.get(partyId), Transactions.all(), Projects.all()]);
+  if (!np) { toast('往来单位已被删除'); render(); return; }
+  let ex = expandId || null;
+  let note = msg || '';
+  if (ex) {
+    const still = txs.find((x) => x.id === ex && x.partyId === partyId);
+    if (!still) { ex = null; note = note || '该流水已改挂到其他往来单位，已从本对账单移出'; }
+  }
+  render(); // 同步刷新底层对账列表（合计、账龄、付款状态随改单更新）
+  partyStatement(np, txs, projects, { expandId: ex, scrollTop: st });
+  if (note) toast(note);
+}
+
+// 时间戳 → 可读文本（创建/最近修改）
+function stampText(ms) {
+  if (!ms) return '';
+  const d = new Date(Number(ms));
+  if (isNaN(d.getTime())) return '';
+  const p = (x) => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+// v2.5.0：对账单内的流水详情面板（点击明细行展开）
+// 只读字段全量展示 + 金额/日期/时间/备注内联快改 + 完整编辑/删除入口
+function txDetailPanel(t, ctx) {
+  const isIn = isIncome(t), isTr = isTransfer(t);
+  const box = h('div', { class: 'tdp' });
+
+  box.appendChild(h('div', { class: 'tdp-head' }, [
+    h('div', { class: 'tdp-amt ' + (isIn ? 'income' : isTr ? 'transfer' : 'expense') },
+      (isIn ? '+' : isTr ? '↔' : '-') + M(t.amount)),
+    h('span', { class: 'tdp-type' }, isTr ? '转账' : isIn ? '收入' : '支出')
+  ]));
+
+  const grid = h('div', { class: 'tdp-grid' });
+  const kv = (k, v, full) => {
+    if (v == null || v === '' || v === '—') return;
+    grid.appendChild(h('div', { class: 'tdp-kv' + (full ? ' full' : '') }, [
+      h('div', { class: 'tdp-k' }, k),
+      h('div', { class: 'tdp-v' }, String(v))
+    ]));
+  };
+  const proj = (ctx.projects || []).find((x) => x.id === t.projectId);
+  let planName = '';
+  if (t.planCat && proj) {
+    const pi = (proj.planItems || []).find((x) => x.id === t.planCat);
+    planName = pi ? pi.cat : '';
+  }
+  kv('日期', (fmtDate(t.date) || '') + (t.date ? ' ' + weekdayCN(t.date) : ''));
+  kv('时间', t.time || '');
+  kv('项目', ctx.pname(t.projectId));
+  if (isTr) {
+    kv('转出账户', t.fromAccount);
+    kv('转入账户', t.toAccount);
+  } else if (isIn) {
+    kv('款项类型', t.subType);
+    kv('开票状态', t.invoiceStatus);
+    kv('发票类型', t.invoiceType);
+    kv('税额', t.taxAmount ? M(t.taxAmount) : '');
+  } else {
+    kv('分类', [t.category, t.subCat].filter(Boolean).join('·'));
+  }
+  kv('账户', t.account || t.method);
+  kv('往来单位', t.partyName);
+  kv('成员', t.memberName);
+  kv('商家', t.merchantName);
+  kv('施工区域', t.region);
+  kv('工种', t.trade);
+  kv('材料', t.material);
+  kv('预算计划', planName);
+  kv('备注', t.note, true);
+  kv('创建', stampText(t.createdAt));
+  kv('最近修改', stampText(t.updatedAt));
+  box.appendChild(grid);
+
+  if (t.attachmentId) {
+    const attBox = h('div', { class: 'tdp-sec' });
+    attBox.appendChild(h('div', { class: 'tdp-k' }, '凭证'));
+    const img = h('img', { class: 'tdp-att', alt: '记账凭证' });
+    attBox.appendChild(img);
+    attURL(t.attachmentId).then((u) => { if (u) img.src = u; else img.remove(); });
+    attBox.appendChild(h('button', {
+      class: 'btn sm ghost', style: 'margin-top:6px',
+      onclick: () => viewBill({ attId: t.attachmentId, name: '记账凭证', type: 'image' }, () => ctx.reopen(t.id))
+    }, '🔍 查看大图'));
+    box.appendChild(attBox);
+  }
+
+  // 内联快改：只提交变化的字段，走 applyTxPatch（读最新记录 + 统一校验）
+  const ed = h('div', { class: 'tdp-edit' });
+  ed.appendChild(h('div', { class: 'tdp-k' }, '快速调整'));
+  const amtIn = h('input', { class: 'ctl', type: 'number', inputmode: 'decimal', step: '0.01' });
+  amtIn.value = t.amount != null ? t.amount : '';
+  const dateIn = h('input', { class: 'ctl', type: 'date' });
+  dateIn.value = fmtDate(t.date) || today();
+  const timeIn = h('input', { class: 'ctl', type: 'time' });
+  timeIn.value = t.time || '';
+  const noteIn = h('textarea', { class: 'ctl', rows: 2 }, t.note || '');
+  const fld = (label, ctrl) => h('div', { class: 'tdp-f' }, [h('label', {}, label), ctrl]);
+  ed.appendChild(fld('金额', amtIn));
+  ed.appendChild(fld('日期', dateIn));
+  ed.appendChild(fld('时间', timeIn));
+  ed.appendChild(fld('备注', noteIn));
+  box.appendChild(ed);
+
+  const acts = h('div', { class: 'tdp-acts' });
+  const saveBtn = h('button', { class: 'btn sm primary', onclick: async () => {
+    const rawAmt = String(amtIn.value).trim();
+    if (rawAmt === '') { toast('金额不能为空'); return; }
+    const patch = {};
+    const na = Number(rawAmt);
+    if (na !== Number(t.amount)) patch.amount = na;
+    if (dateIn.value && dateIn.value !== fmtDate(t.date)) patch.date = dateIn.value;
+    const nt = timeIn.value || '';
+    if (nt !== (t.time || '')) patch.time = nt;
+    const nn = String(noteIn.value || '').trim();
+    if (nn !== (t.note || '')) patch.note = nn;
+    if (!Object.keys(patch).length) { toast('没有改动'); return; }
+    const err = validateTxPatch(patch);
+    if (err) { toast(err); return; }
+    saveBtn.disabled = true; saveBtn.textContent = '保存中…';
+    const r = await applyTxPatch(t.id, patch);
+    if (!r.ok) { saveBtn.disabled = false; saveBtn.textContent = '💾 保存修改'; toast(r.msg); return; }
+    ctx.reopen(t.id, '已更新，对账单已同步');
+  } }, '💾 保存修改');
+  acts.appendChild(saveBtn);
+  acts.appendChild(h('button', { class: 'btn sm ghost', onclick: () => {
+    txForm(null, t.projectId, t, null, {
+      onSaved: (saved) => {
+        const moved = saved && saved.partyId !== ctx.partyId;
+        ctx.reopen(moved ? null : (saved && saved.id), moved ? '该流水已改挂到其他往来单位，已从本对账单移出' : '已保存，对账单已同步');
+      }
+    });
+  } }, '✎ 完整编辑'));
+  acts.appendChild(h('button', { class: 'btn sm danger', onclick: () => {
+    confirmDialog('删除这笔记账？可在「设置 → 数据安全 → 回收站」30 天内还原。', () => {
+      Transactions.get(t.id)
+        .then((full) => Transactions.remove(full || t))
+        .then(() => ctx.reopen(null, '已删除，可在回收站还原'));
+    }, '删除');
+  } }, '🗑 删除'));
+  acts.appendChild(h('button', { class: 'btn sm ghost', onclick: () => ctx.reopen(null) }, '收起'));
+  box.appendChild(acts);
+  return box;
 }
 
 // 查看账单凭证：图片弹窗预览，PDF 内嵌预览；关闭后重开对账单（reopen）
@@ -4025,8 +4283,9 @@ function projectForm(existing) {
 }
 
 // ---------- 表单：记账（对齐参考：大金额+拍照、字段行式、二级分类、账户、成员/商家、时间到分、转账） ----------
-async function txForm(presetType, presetProject, existingTx, preset) {
+async function txForm(presetType, presetProject, existingTx, preset, opts) {
   // existingTx.__copy=true 表示「复制上笔」：预填全部字段但保存为新记录
+  // v2.5.0：opts.onSaved(tx) —— 保存后由调用方决定刷新方式（对账单用它们自己的重建流程）
   const srcTx = existingTx || null;
   const isEdit = !!srcTx && !srcTx.__copy;
   let type = presetType || (srcTx && srcTx.type) || (preset && preset.type) || 'expense';
@@ -4317,16 +4576,32 @@ async function txForm(presetType, presetProject, existingTx, preset) {
       }
       t.partyId = partyId; t.partyName = partyName;
     }
+    // v2.5.0：编辑前重读库里最新记录。用打开表单时的陈旧快照直接写回，
+    // 会把期间（另一台设备 / 详情面板快改 / 批量操作）产生过的改动覆盖掉。
+    let freshSrc = null;
+    if (isEdit) {
+      freshSrc = await Transactions.get(srcTx.id);
+      if (!freshSrc) { toast('该流水已被删除，无法修改'); closeModal(); render(); return; }
+    }
     const pf = photoFile;
     if (pf) {
-      if (isEdit && existingTx.attachmentId) Attachments.remove(existingTx.attachmentId);
+      const oldAtt = (freshSrc || existingTx || {}).attachmentId;
+      if (isEdit && oldAtt) Attachments.remove(oldAtt);
       t.attachmentId = await Attachments.save(pf, pf.type);
-    } else if (keepAttachId) {
-      t.attachmentId = keepAttachId;
+    } else {
+      // 未换图：以库里最新记录为准兜住附件，避免把别人新传的凭证抹掉
+      const keep = (freshSrc && freshSrc.attachmentId) || keepAttachId || (existingTx && existingTx.attachmentId);
+      if (keep) t.attachmentId = keep;
     }
-    Transactions.save(t).then(async () => {
-      await budgetAlertAfterSave(t); // P2：支出即时预算预警（超支/接近阈值）
-      if (isEdit || srcTx) { closeModal(); toast(isEdit ? '已更新' : '已记录'); render(); return; }
+    // 清掉其它类型的专属字段 + 保留表单未管理的字段，统一由内核合并
+    const finalTx = mergeTxKeepUnknown(freshSrc, t);
+    Transactions.save(finalTx).then(async () => {
+      await budgetAlertAfterSave(finalTx); // P2：支出即时预算预警（超支/接近阈值）
+      if (isEdit || srcTx) {
+        closeModal(); toast(isEdit ? '已更新' : '已记录');
+        if (opts && opts.onSaved) opts.onSaved(finalTx); else render();
+        return;
+      }
       // 新建：连续记账模式——弹窗不关，清空金额/备注/照片继续记
       savedCount++; savedSum += amt;
       amount.value = ''; if (noteSel) noteSel.value = '';
