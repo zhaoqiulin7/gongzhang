@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=400, initial-scale=1"></head>
+<body style="margin:0;background:#333">
+<iframe id="f" src="/_probe/geo.html" style="width:400px;height:890px;border:0;display:block"></iframe>
+<script>
+  var t0 = Date.now();
+  setInterval(function () {
+    try {
+      var d = document.getElementById('f').contentDocument.getElementById('geoout');
+      if (d && d.getAttribute('data-geo')) {
+        document.body.setAttribute('data-geo', d.getAttribute('data-geo'));
+        if (Date.now() - t0 > 40000) return;
+      }
+    } catch (e) {}
+  }, 500);
+</script>
+</body>
+</html>

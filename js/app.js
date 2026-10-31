@@ -18,14 +18,30 @@ const state = {
   // v2.4.0 统计：basis=口径（start 项目开工年 / date 发生日期）；statsYear=开工年口径下的年份
   statsRange: 'year', statsDim: 'project', statsBasis: 'start', statsYear: '',
   statsForm: 'bar', statsTrend: 'line', statsCat: 'all',
-  // 统计下钻：{label, ids[]} 锁定一组流水，交给流水页精确展示
-  ledgerDrill: null,
+  // 统计下钻：{label, ids[], from} 锁定一组流水，交给流水页精确展示
+  drill: null,
   reconStatus: 'all', ledgerCustom: null,
   // v2.6.0：流水页展开详情的流水 id（null=全部收起）
   ledgerExpand: null,
   // v2.6.0：项目详情页展开详情的流水 id
-  projExpand: null
+  projExpand: null,
+  // v2.7.0：首页看板配置模式
+  boardEdit: false,
+  // v2.7.0：多项目对比页筛选状态
+  cmpProjects: [], cmpRange: 'all', cmpCustom: null,
+  // v2.7.0（C3）：设置页当前分组
+  setGroup: 'remind'
 };
+
+// v2.7.0（C3）：设置页分组——把原来 5 个大 section 拆成 5 个 Tab，一次只显示一组，
+// 首屏长度从「滚 3 屏」降到「一屏以内」。
+const SETTINGS_GROUPS = [
+  { key: 'remind', label: '提醒与预警', icon: '🔔', desc: '系统通知 · 提醒天数 · 预算与工期阈值' },
+  { key: 'look', label: '外观', icon: '🎨', desc: '暖纸账本 / 墨绿夜读主题' },
+  { key: 'ledger', label: '记账配置', icon: '🧾', desc: '账户 · 分类 · 模板 · 周期记账' },
+  { key: 'plan', label: '项目模板', icon: '📐', desc: '进度计划模板 · 默认施工阶段' },
+  { key: 'data', label: '数据安全', icon: '🔐', desc: '快照 · 回收站 · 演示数据 · 备份' }
+];
 
 // 默认施工阶段模板（新建项目自动带入，可在「设置」中增删）
 const DEFAULT_STAGES = [
@@ -360,6 +376,7 @@ async function render() {
   else if (route === 'settings') node = await settingsView();
   else if (route === 'stats') node = await statsView();
   else if (route === 'forecast') node = await forecastView();
+  else if (route === 'compare') node = await compareView();
   else if (route === 'ledger') {
     if (parts[1] && rangeOf(parts[1]).key === parts[1]) state.ledgerRange = parts[1];
     node = await ledgerView();
@@ -398,10 +415,113 @@ function setupFab(route, pid) {
 }
 
 // ---------- 首页 ----------
+// ---------- 首页可配置看板（B3，v2.7.0）----------
+// 首页被拆成若干「区块」，用户可自行显隐与调整顺序；配置存 meta.homeBoard。
+// 结构：{ order: [区块id...], hidden: [区块id...] }
+const HOME_BLOCKS = [
+  { id: 'demo', title: '演示提示', desc: '演示数据引导卡' },
+  { id: 'overview', title: '总览（累计）', desc: '收入 / 支出 / 利润 / 待收待付' },
+  { id: 'cycle', title: '周期记账', desc: '待确认的固定周期收支' },
+  { id: 'time', title: '按时间维度', desc: '今天 / 本周 / 本月等收支汇总' },
+  { id: 'due', title: '7 天内到期', desc: '收付款节点提醒' },
+  { id: 'stage', title: '工期预警', desc: '阶段逾期 / 临近' },
+  { id: 'budget', title: '预算预警', desc: '成本预算超支 / 接近' },
+  { id: 'projects', title: '项目进度看板', desc: '项目卡片列表' }
+];
+const HOME_BLOCK_DEFAULT_ORDER = HOME_BLOCKS.map((b) => b.id);
+
+async function getBoardConfig() {
+  const raw = await Meta.get('homeBoard', null);
+  const cfg = (raw && typeof raw === 'object') ? raw : {};
+  const order = Array.isArray(cfg.order) ? cfg.order.filter((id) => HOME_BLOCKS.some((b) => b.id === id)) : [];
+  // 补齐新增区块（版本升级后新卡片默认追加在末尾）
+  HOME_BLOCK_DEFAULT_ORDER.forEach((id) => { if (order.indexOf(id) < 0) order.push(id); });
+  const hidden = Array.isArray(cfg.hidden) ? cfg.hidden.filter((id) => HOME_BLOCKS.some((b) => b.id === id)) : [];
+  return { order: order, hidden: hidden };
+}
+async function saveBoardConfig(cfg) { await Meta.set('homeBoard', cfg); }
+
+// 区块上移 / 下移 / 显隐切换（原地操作 cfg 后持久化并重渲染）
+async function boardMove(id, dir) {
+  const cfg = await getBoardConfig();
+  const i = cfg.order.indexOf(id);
+  if (i < 0) return;
+  const j = dir === 'up' ? i - 1 : dir === 'down' ? i + 1 : i;
+  if (j < 0 || j >= cfg.order.length) return;
+  const tmp = cfg.order[i]; cfg.order[i] = cfg.order[j]; cfg.order[j] = tmp;
+  await saveBoardConfig(cfg);
+  render();
+}
+async function boardToggle(id, hide) {
+  const cfg = await getBoardConfig();
+  const idx = cfg.hidden.indexOf(id);
+  if (hide && idx < 0) cfg.hidden.push(id);
+  else if (!hide && idx >= 0) cfg.hidden.splice(idx, 1);
+  await saveBoardConfig(cfg);
+  render();
+}
+
+// 看板配置模式下的操作条（显隐 + 上下移动）
+function boardCtrlBar(id, cfg, isHidden) {
+  const i = cfg.order.indexOf(id);
+  const bar = h('div', { class: 'board-ctrl', 'data-board-row': id }, [
+    h('div', { style: 'min-width:0;flex:1' }, [
+      h('div', { style: 'font-weight:600;font-size:var(--g-fs-md)' }, HOME_BLOCKS.filter((b) => b.id === id).map((b) => b.title)[0] || id),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs)' }, HOME_BLOCKS.filter((b) => b.id === id).map((b) => b.desc)[0] || '')
+    ]),
+    h('div', { style: 'display:flex;gap:6px;flex:0 0 auto' }, [
+      h('button', { class: 'btn sm ghost', title: '上移', onclick: () => boardMove(id, 'up') }, '↑'),
+      h('button', { class: 'btn sm ghost', title: '下移', onclick: () => boardMove(id, 'down') }, '↓'),
+      h('button', { class: 'btn sm ' + (isHidden ? 'primary' : 'ghost'), onclick: () => boardToggle(id, !isHidden) }, isHidden ? '已隐藏' : '隐藏')
+    ])
+  ]);
+  return bar;
+}
+
+// ---------- 统一下钻上下文与提示条（C2，v2.7.0）----------
+// 统计页 / 对账页 / 项目对比页 下钻到流水页时，共用同一套上下文与同一款提示条，
+// 保证三处行为一致：同样的图标与文案、同样的「退出」逻辑、同样保留筛选。
+// state.drill = { label, ids, from }，from: 'stats' | 'recon' | 'compare'
+const DRILL_FROM_LABEL = { stats: '统计报表', recon: '对账', compare: '项目对比', ledger: '流水' };
+
+function setDrill(label, ids, from) {
+  state.drill = { label: label, ids: ids || [], from: from || 'stats' };
+  state.ledgerDrill = state.drill; // 兼容旧字段
+  state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all';
+  state.ledgerProject = 'all'; state.ledgerQ = ''; state.ledgerRange = 'all';
+  location.hash = '#/ledger/all';
+}
+function clearDrill() {
+  state.drill = null;
+  state.ledgerDrill = null;
+  state.ledgerRange = 'month';
+}
+
+// 统一下钻提示条（流水页顶部）
+function drillBanner(drill) {
+  if (!drill || !drill.ids || !drill.ids.length) return null;
+  const fromLabel = DRILL_FROM_LABEL[drill.from] || '统计报表';
+  return h('div', { class: 'card drill-banner' }, [
+    h('div', { style: 'min-width:0;flex:1' }, [
+      h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '📊 ' + fromLabel + '下钻'),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' },
+        drill.label + ' · ' + drill.ids.length + ' 笔'),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:2px' }, '下钻期间仍可用下方筛选进一步缩小范围')
+    ]),
+    h('button', { class: 'btn sm ghost', style: 'flex:0 0 auto', onclick: () => { clearDrill(); render(); } }, '退出')
+  ]);
+}
+
+// 统一下钻出口：从任意页面跳到流水页并锁定一组流水
+function drillToLedger(label, ids, from) { setDrill(label, ids, from); }
+
+// 统计下钻：把「当前口径锁定的一组流水 id」交给流水页，比按区间回查精确
+function statsDrill(label, ids) { drillToLedger(label, ids, 'stats'); }
+
 async function homeView() {
   setPageTitle('装修记账');
-  const [projects, txs, rems, isDemo] = await Promise.all([
-    Projects.all(), Transactions.all(), Reminders.all(), Meta.get('demoMode', false)
+  const [projects, txs, rems, isDemo, cfg] = await Promise.all([
+    Projects.all(), Transactions.all(), Reminders.all(), Meta.get('demoMode', false), getBoardConfig()
   ]);
   let income = 0, expense = 0;
   txs.forEach((t) => {
@@ -414,80 +534,116 @@ async function homeView() {
   });
 
   const wrap = h('div');
+  const edit = state.boardEdit; // 配置模式：显示显隐/排序控件
 
-  // v2.6.0：演示模式提示卡
-  if (isDemo) {
+  // 预取各区块所需的异步数据（区块构建器本身是同步的）
+  let cyPend = [], stageWarnList = [], budgetWarnList = [];
+  try { cyPend = await cyclePending(); } catch (e) { /* 周期记账失败不影响首页 */ }
+  try { stageWarnList = await stageWarnings(); } catch (e) { /* 工期预警失败不影响首页 */ }
+  try { budgetWarnList = await budgetWarnings(); } catch (e) { /* 预算预警失败不影响首页 */ }
+
+  // 配置模式顶部条
+  if (edit) {
     wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-style:dashed' }, [
+      h('div', { style: 'min-width:0;flex:1' }, [
+        h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '⚙️ 看板配置'),
+        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '用 ↑↓ 调整顺序，点「隐藏」把卡片收起来')
+      ]),
+      h('button', { class: 'btn sm primary', style: 'flex:0 0 auto', onclick: () => { state.boardEdit = false; render(); } }, '完成')
+    ]));
+  } else {
+    wrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
+      h('h2', { class: 'section', style: 'margin:0' }, '装修记账'),
+      h('div', { style: 'display:flex;gap:8px;flex:0 0 auto' }, [
+        h('button', { class: 'btn sm ghost', title: '自定义首页卡片', onclick: () => { state.boardEdit = true; render(); } }, '⚙️ 看板配置'),
+        h('button', { class: 'eye-btn', title: '隐藏/显示金额', onclick: () => { state.hideMoney = !state.hideMoney; Meta.set('hideMoney', state.hideMoney).then(render); } }, state.hideMoney ? '🙈' : '👁')
+      ])
+    ]));
+  }
+
+  // ---- 各区块的构建函数（返回节点数组；空区块返回 [] 表示无内容）----
+  const blocks = {};
+
+  // ① 演示提示
+  blocks.demo = () => {
+    if (!isDemo) return [];
+    return [h('div', { class: 'card', style: 'padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-style:dashed' }, [
       h('div', { style: 'min-width:0' }, [
         h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '🎬 演示数据体验中'),
         h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '记账/项目都是示例，可一键换成空白账本')
       ]),
       h('button', { class: 'btn sm primary', style: 'flex:0 0 auto', onclick: () => { location.hash = '#/settings'; } }, '开始记账')
-    ]));
-  }
+    ])];
+  };
 
-  wrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
-    h('h2', { class: 'section', style: 'margin:0' }, '总览（累计）'),
-    h('button', { class: 'eye-btn', title: '隐藏/显示金额', onclick: () => { state.hideMoney = !state.hideMoney; Meta.set('hideMoney', state.hideMoney).then(render); } }, state.hideMoney ? '🙈' : '👁')
-  ]));
-  wrap.appendChild(h('div', { class: 'stat-grid' }, [
-    stat('总收入', M(income), 'income'),
-    stat('总支出', M(expense), 'expense'),
-    stat('总利润', M(income - expense), 'profit'),
-    stat('项目数', String(projects.length), '', () => { location.hash = '#/projects'; }),
-    stat('待收', M(recvDue), 'income', () => drillDue('receive')),
-    stat('待付', M(payDue), 'expense', () => drillDue('pay'))
-  ]));
-
-  // v2.6.0：周期记账待确认（到期未处理的固定收支）
-  try {
-    const cyPend = await cyclePending();
-    if (cyPend.length) {
-      wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px' }, [
-        h('div', { class: 'row-between' }, [
-          h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '🔁 周期记账 · ' + cyPend.length + ' 期待确认'),
-          h('button', { class: 'btn sm ghost', onclick: () => cyclePendingModal() }, '去处理')
-        ]),
-        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:2px' },
-          cyPend.slice(0, 3).map((pd) => fmtMD(pd.date) + ' ' + (pd.item.name || '') + ' ' + (pd.item.type === 'income' ? '+' : '-') + M(pd.item.amount)).join(' · ')
-          + (cyPend.length > 3 ? ' 等' : '') + '，点确认才入账')
-      ]));
-    }
-  } catch (e) { /* 周期记账失败不影响首页 */ }
-
-  // 按时间维度汇总（点击下钻到流水页）
-  wrap.appendChild(h('div', { class: 'row-between', style: 'margin:4px 0 12px' }, [
-    h('h2', { class: 'section', style: 'margin:0' }, '按时间维度'),
-    h('div', { style: 'display:flex;gap:8px;flex:0 0 auto' }, [
-      h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/forecast'; } }, '📈 资金预测'),
-      h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/stats'; } }, '统计报表 ›')
+  // ② 总览（累计）
+  blocks.overview = () => [
+    h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
+      h('h2', { class: 'section', style: 'margin:0' }, '总览（累计）'),
+      edit ? null : h('button', { class: 'eye-btn', title: '隐藏/显示金额', onclick: () => { state.hideMoney = !state.hideMoney; Meta.set('hideMoney', state.hideMoney).then(render); } }, state.hideMoney ? '🙈' : '👁')
+    ]),
+    h('div', { class: 'stat-grid' }, [
+      stat('总收入', M(income), 'income'),
+      stat('总支出', M(expense), 'expense'),
+      stat('总利润', M(income - expense), 'profit'),
+      stat('项目数', String(projects.length), '', () => { location.hash = '#/projects'; }),
+      stat('待收', M(recvDue), 'income', () => drillDue('receive')),
+      stat('待付', M(payDue), 'expense', () => drillDue('pay'))
     ])
-  ]));
-  const timeCard = h('div', { class: 'card' });
-  timeRangeSummary(txs).forEach((it) => {
-    timeCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/ledger/' + it.r.key; } }, [
-      h('div', { style: 'flex:1;min-width:0' }, [
-        h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, it.r.label),
-        h('div', { class: 'meta' }, it.r.sub)
-      ]),
-      h('div', { class: 'tr-r' }, [
-        h('div', { class: 'amt expense' }, '-' + M(it.expense)),
-        h('div', { class: 'amt income', style: 'font-size:var(--g-fs-md)' }, '+' + M(it.income))
-      ]),
-      h('span', { class: 'chev' }, '›')
-    ]));
-  });
-  wrap.appendChild(timeCard);
+  ];
 
-  // 7 天内到期节点（含逾期），点击进入对应项目
-  const lim = new Date();
-  lim.setDate(lim.getDate() + 7);
-  const limStr = lim.getFullYear() + '-' + pad2(lim.getMonth() + 1) + '-' + pad2(lim.getDate());
-  const td = today();
-  const dueSoon = rems.filter((r) => !r.done && r.dueDate && r.dueDate <= limStr)
-    .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
-  if (dueSoon.length) {
-    wrap.appendChild(h('h2', { class: 'section' }, '7 天内到期（' + dueSoon.length + '）'));
+  // ③ 周期记账待确认
+  blocks.cycle = () => {
+    if (!cyPend.length) return [];
+    return [h('div', { class: 'card', style: 'padding:10px 14px' }, [
+      h('div', { class: 'row-between' }, [
+        h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '🔁 周期记账 · ' + cyPend.length + ' 期待确认'),
+        h('button', { class: 'btn sm ghost', onclick: () => cyclePendingModal() }, '去处理')
+      ]),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:2px' },
+        cyPend.slice(0, 3).map((pd) => fmtMD(pd.date) + ' ' + (pd.item.name || '') + ' ' + (pd.item.type === 'income' ? '+' : '-') + M(pd.item.amount)).join(' · ')
+        + (cyPend.length > 3 ? ' 等' : '') + '，点确认才入账')
+    ])];
+  };
+
+  // ④ 按时间维度
+  blocks.time = () => {
+    const nodes = [
+      h('div', { class: 'row-between', style: 'margin:4px 0 12px' }, [
+        h('h2', { class: 'section', style: 'margin:0' }, '按时间维度'),
+        h('div', { style: 'display:flex;gap:8px;flex:0 0 auto' }, [
+          h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/forecast'; } }, '📈 资金预测'),
+          h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/stats'; } }, '统计报表 ›')
+        ])
+      ])
+    ];
+    const timeCard = h('div', { class: 'card' });
+    timeRangeSummary(txs).forEach((it) => {
+      timeCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/ledger/' + it.r.key; } }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, it.r.label),
+          h('div', { class: 'meta' }, it.r.sub)
+        ]),
+        h('div', { class: 'tr-r' }, [
+          h('div', { class: 'amt expense' }, '-' + M(it.expense)),
+          h('div', { class: 'amt income', style: 'font-size:var(--g-fs-md)' }, '+' + M(it.income))
+        ]),
+        h('span', { class: 'chev' }, '›')
+      ]));
+    });
+    nodes.push(timeCard);
+    return nodes;
+  };
+
+  // ⑤ 7 天内到期
+  blocks.due = () => {
+    const lim = new Date();
+    lim.setDate(lim.getDate() + 7);
+    const limStr = lim.getFullYear() + '-' + pad2(lim.getMonth() + 1) + '-' + pad2(lim.getDate());
+    const td = today();
+    const dueSoon = rems.filter((r) => !r.done && r.dueDate && r.dueDate <= limStr)
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+    if (!dueSoon.length) return [];
     const dueCard = h('div', { class: 'card' });
     dueSoon.forEach((r) => {
       const overdue = r.dueDate < td;
@@ -506,108 +662,120 @@ async function homeView() {
         h('span', { class: 'chev' }, '›')
       ]));
     });
-    wrap.appendChild(dueCard);
-  }
+    return [h('h2', { class: 'section' }, '7 天内到期（' + dueSoon.length + '）'), dueCard];
+  };
 
-  // P2.5：工期预警（未完成阶段预计结束时间 逾期/临近）
-  try {
-    const sw2 = await stageWarnings();
-    if (sw2.length) {
-      sw2.sort((a, b) => (b.level === 'over' ? 1 : 0) - (a.level === 'over' ? 1 : 0) || (a.s.planEnd || '').localeCompare(b.s.planEnd || ''));
-      wrap.appendChild(h('h2', { class: 'section' }, '⏰ 工期预警（' + sw2.length + '）'));
-      const sCard = h('div', { class: 'card' });
-      sw2.slice(0, 10).forEach((w) => {
-        sCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
-          h('div', { style: 'flex:1;min-width:0' }, [
-            h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
-              h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '逾期' : '临近'),
-              document.createTextNode(w.p.name)
-            ]),
-            h('div', { class: 'meta' }, w.msg)
+  // ⑥ 工期预警
+  blocks.stage = () => {
+    if (!stageWarnList.length) return [];
+    const sw2 = stageWarnList.slice().sort((a, b) => (b.level === 'over' ? 1 : 0) - (a.level === 'over' ? 1 : 0) || (a.s.planEnd || '').localeCompare(b.s.planEnd || ''));
+    const sCard = h('div', { class: 'card' });
+    sw2.slice(0, 10).forEach((w) => {
+      sCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
+            h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '逾期' : '临近'),
+            document.createTextNode(w.p.name)
           ]),
-          h('span', { class: 'chev' }, '›')
-        ]));
-      });
-      if (sw2.length > 10) sCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);padding:8px 0 2px' }, '还有 ' + (sw2.length - 10) + ' 条，进项目详情查看'));
-      wrap.appendChild(sCard);
-    }
-  } catch (e) { /* 工期预警失败不影响首页 */ }
+          h('div', { class: 'meta' }, w.msg)
+        ]),
+        h('span', { class: 'chev' }, '›')
+      ]));
+    });
+    if (sw2.length > 10) sCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);padding:8px 0 2px' }, '还有 ' + (sw2.length - 10) + ' 条，进项目详情查看'));
+    return [h('h2', { class: 'section' }, '⏰ 工期预警（' + sw2.length + '）'), sCard];
+  };
 
-  // P2：预算预警（总成本预算 + 各计划类别，超支红/接近黄）
-  try {
-    const warns = await budgetWarnings();
-    if (warns.length) {
-      warns.sort((a, b) => (b.level === 'over' ? 1 : 0) - (a.level === 'over' ? 1 : 0) || b.ratio - a.ratio);
-      wrap.appendChild(h('h2', { class: 'section' }, '⚠️ 预算预警（' + warns.length + '）'));
-      const wCard = h('div', { class: 'card' });
-      warns.slice(0, 10).forEach((w) => {
-        const pct = Math.min(100, Math.round(w.ratio * 100));
-        const row = h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
-          h('div', { style: 'flex:1;min-width:0' }, [
-            h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
-              h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '超支' : '接近'),
-              document.createTextNode(w.p.name)
-            ]),
-            h('div', { class: 'meta' }, w.msg),
-            h('div', { class: 'bar', style: 'margin-top:5px' }, [h('div', { class: 'bar-fill' + (w.level === 'over' ? ' over' : ''), style: 'width:' + pct + '%' })])
+  // ⑦ 预算预警
+  blocks.budget = () => {
+    if (!budgetWarnList.length) return [];
+    const warns = budgetWarnList.slice().sort((a, b) => (b.level === 'over' ? 1 : 0) - (a.level === 'over' ? 1 : 0) || b.ratio - a.ratio);
+    const wCard = h('div', { class: 'card' });
+    warns.slice(0, 10).forEach((w) => {
+      const pct = Math.min(100, Math.round(w.ratio * 100));
+      wCard.appendChild(h('div', { class: 'tr-row', onclick: () => { location.hash = '#/project/' + w.p.id; } }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl)' }, [
+            h('span', { class: 'tag ' + (w.level === 'over' ? 'unpaid' : 'finished'), style: 'margin-right:6px' }, w.level === 'over' ? '超支' : '接近'),
+            document.createTextNode(w.p.name)
           ]),
-          h('div', { style: 'font-weight:700;font-size:var(--g-fs-md);color:' + (w.level === 'over' ? 'var(--danger)' : 'var(--accent)') }, pct + '%'),
-          h('span', { class: 'chev' }, '›')
-        ]);
-        wCard.appendChild(row);
-      });
-      if (warns.length > 10) wCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);padding:8px 0 2px' }, '还有 ' + (warns.length - 10) + ' 条预警，进项目详情查看'));
-      wrap.appendChild(wCard);
+          h('div', { class: 'meta' }, w.msg),
+          h('div', { class: 'bar', style: 'margin-top:5px' }, [h('div', { class: 'bar-fill' + (w.level === 'over' ? ' over' : ''), style: 'width:' + pct + '%' })])
+        ]),
+        h('div', { style: 'font-weight:700;font-size:var(--g-fs-md);color:' + (w.level === 'over' ? 'var(--danger)' : 'var(--accent)') }, pct + '%'),
+        h('span', { class: 'chev' }, '›')
+      ]));
+    });
+    if (warns.length > 10) wCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);padding:8px 0 2px' }, '还有 ' + (warns.length - 10) + ' 条预警，进项目详情查看'));
+    return [h('h2', { class: 'section' }, '⚠️ 预算预警（' + warns.length + '）'), wCard];
+  };
+
+  // ⑧ 项目进度看板
+  blocks.projects = () => {
+    const nodes = [h('h2', { class: 'section' }, '项目进度看板')];
+    const sortOpts = [['start', '开工时间'], ['end', '竣工时间'], ['contract', '合同额'], ['profit', '利润']];
+    const sortSeg = h('div', { class: 'seg', style: 'margin-bottom:10px' });
+    sortOpts.forEach(([v, label]) => {
+      sortSeg.appendChild(h('button', { class: state.homeSort === v ? 'on' : '', onclick: () => { state.homeSort = v; render(); } }, label));
+    });
+    const stageNames = collectStageNames(projects);
+    const chips = h('div', { class: 'chips', style: 'margin-bottom:12px' });
+    const mkChip = (val, label, extra) => h('button', { class: 'chip' + (state.homeStage === val ? ' on' : ''), onclick: () => { state.homeStage = val; render(); } }, label + (extra ? '（' + extra + '）' : ''));
+    chips.appendChild(mkChip('all', '全部', projects.length));
+    stageNames.forEach((name) => {
+      const cnt = projects.filter((p) => currentStageName(p) === name).length;
+      if (cnt > 0) chips.appendChild(mkChip(name, name, cnt));
+    });
+    const noStage = projects.filter((p) => !(p.stages || []).length).length;
+    if (noStage > 0) chips.appendChild(mkChip('none', '未排期', noStage));
+    nodes.push(sortSeg, chips);
+
+    let list = projects.slice();
+    if (state.homeStage === 'none') list = list.filter((p) => !(p.stages || []).length);
+    else if (state.homeStage !== 'all') list = list.filter((p) => currentStageName(p) === state.homeStage);
+    const withStats = list.map((p) => ({ p, s: quickStats(txs, p.id) }));
+    const keyFn = {
+      start: (o) => o.p.startDate || '9999',
+      end: (o) => o.p.endDate || '9999',
+      contract: (o) => -(Number(o.p.contractAmount) || 0),
+      profit: (o) => -o.s.profit
+    }[state.homeSort];
+    withStats.sort((a, b) => {
+      const ka = keyFn(a), kb = keyFn(b);
+      return typeof ka === 'string' ? ka.localeCompare(kb) : ka - kb;
+    });
+    if (!withStats.length) {
+      nodes.push(emptyState('没有符合条件的项目', '调整筛选或点右下角 + 新建'));
+    } else {
+      const sum = withStats.reduce((acc, o) => { acc.i += o.s.income; acc.e += o.s.expense; return acc; }, { i: 0, e: 0 });
+      nodes.push(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-2px 0 10px' },
+        '当前筛选合计：收 ' + M(sum.i) + ' · 支 ' + M(sum.e) + ' · 利润 ' + M(sum.i - sum.e)));
+      withStats.forEach(({ p, s }) => nodes.push(projectCard(p, s)));
     }
-  } catch (e) { /* 预警计算失败不影响首页 */ }
+    return nodes;
+  };
 
-  // 项目进度看板：排序 + 按施工阶段筛选
-  wrap.appendChild(h('h2', { class: 'section' }, '项目进度看板'));
-
-  const sortOpts = [['start', '开工时间'], ['end', '竣工时间'], ['contract', '合同额'], ['profit', '利润']];
-  const sortSeg = h('div', { class: 'seg', style: 'margin-bottom:10px' });
-  sortOpts.forEach(([v, label]) => {
-    sortSeg.appendChild(h('button', { class: state.homeSort === v ? 'on' : '', onclick: () => { state.homeSort = v; render(); } }, label));
+  // ---- 按配置顺序组装 ----
+  cfg.order.forEach((id) => {
+    const isHidden = cfg.hidden.indexOf(id) >= 0;
+    const builder = blocks[id];
+    if (!builder) return;
+    const nodes = builder();
+    if (edit) {
+      // 配置模式：所有区块都显示（含空的），顶部带操作条
+      const box = h('div', { class: 'board-slot' });
+      box.appendChild(boardCtrlBar(id, cfg, isHidden));
+      if (!isHidden && nodes.length) {
+        const inner = h('div', { class: 'board-slot-body' });
+        nodes.forEach((n) => inner.appendChild(n));
+        box.appendChild(inner);
+      }
+      wrap.appendChild(box);
+    } else {
+      if (isHidden) return;
+      nodes.forEach((n) => wrap.appendChild(n));
+    }
   });
-
-  const stageNames = collectStageNames(projects);
-  const chips = h('div', { class: 'chips', style: 'margin-bottom:12px' });
-  const mkChip = (val, label, extra) => h('button', { class: 'chip' + (state.homeStage === val ? ' on' : ''), onclick: () => { state.homeStage = val; render(); } }, label + (extra ? '（' + extra + '）' : ''));
-  chips.appendChild(mkChip('all', '全部', projects.length));
-  stageNames.forEach((name) => {
-    const cnt = projects.filter((p) => currentStageName(p) === name).length;
-    if (cnt > 0) chips.appendChild(mkChip(name, name, cnt));
-  });
-  const noStage = projects.filter((p) => !(p.stages || []).length).length;
-  if (noStage > 0) chips.appendChild(mkChip('none', '未排期', noStage));
-  wrap.appendChild(sortSeg);
-  wrap.appendChild(chips);
-
-  // 过滤 + 排序
-  let list = projects.slice();
-  if (state.homeStage === 'none') list = list.filter((p) => !(p.stages || []).length);
-  else if (state.homeStage !== 'all') list = list.filter((p) => currentStageName(p) === state.homeStage);
-
-  const withStats = list.map((p) => ({ p, s: quickStats(txs, p.id) }));
-  const keyFn = {
-    start: (o) => o.p.startDate || '9999',
-    end: (o) => o.p.endDate || '9999',
-    contract: (o) => -(Number(o.p.contractAmount) || 0),
-    profit: (o) => -o.s.profit
-  }[state.homeSort];
-  withStats.sort((a, b) => {
-    const ka = keyFn(a), kb = keyFn(b);
-    return typeof ka === 'string' ? ka.localeCompare(kb) : ka - kb;
-  });
-
-  if (!withStats.length) {
-    wrap.appendChild(emptyState('没有符合条件的项目', '调整筛选或点右下角 + 新建'));
-  } else {
-    const sum = withStats.reduce((acc, o) => { acc.i += o.s.income; acc.e += o.s.expense; return acc; }, { i: 0, e: 0 });
-    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-2px 0 10px' },
-      '当前筛选合计：收 ' + M(sum.i) + ' · 支 ' + M(sum.e) + ' · 利润 ' + M(sum.i - sum.e)));
-    withStats.forEach(({ p, s }) => wrap.appendChild(projectCard(p, s)));
-  }
   return wrap;
 }
 
@@ -698,8 +866,8 @@ async function ledgerView() {
   if (state.ledgerRange === 'custom' && state.ledgerCustom) {
     rg = { key: 'custom', label: state.ledgerCustom.label, sub: '', from: state.ledgerCustom.from, to: state.ledgerCustom.to };
   }
-  // v2.4.0：统计下钻——直接锁定一组流水 id（比按日期区间回查精确，跨年项目不会串年份）
-  const drill = state.ledgerDrill;
+  // v2.7.0（C2）：统一下钻上下文——统计页 / 对账页 / 项目对比页 共用同一结构与提示条
+  const drill = state.drill;
   let drillMap = null;
   if (drill && drill.ids && drill.ids.length) {
     drillMap = {};
@@ -738,16 +906,9 @@ async function ledgerView() {
 
   const wrap = h('div');
 
-  // v2.4.0：统计下钻提示条（口径锁定期间，日期区间与维度筛选在其之上继续生效）
-  if (drillMap) {
-    wrap.appendChild(h('div', { class: 'card', style: 'padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px' }, [
-      h('div', { style: 'min-width:0;flex:1' }, [
-        h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, '📊 统计下钻'),
-        h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, drill.label)
-      ]),
-      h('button', { class: 'btn sm ghost', onclick: () => { state.ledgerDrill = null; state.ledgerRange = 'month'; render(); } }, '退出')
-    ]));
-  }
+  // v2.7.0（C2）：统一下钻提示条（统计 / 对账 / 项目对比 三处下钻共用同一组件与退出逻辑）
+  const banner = drillBanner(drill);
+  if (banner) wrap.appendChild(banner);
 
   // 常用模板（一键套用）
   const tpls = await getTemplates();
@@ -873,15 +1034,15 @@ async function ledgerView() {
     } }, '清除全部筛选并显示所有时间'));
     wrap.appendChild(es);
   } else {
-    // v2.6.0：流水行点击展开详情面板（复用对账单详情 + 改单内核）
-    const ledgerCtx = {
-      projects: projects, pname: pname, partyId: null, savedMsg: '已更新',
+    // v2.7.0（C2）：统一详情面板上下文（流水页场景）
+    const ledgerCtx = makeTxCtx({
+      scope: 'list', projects: projects, pname: pname,
       reopen: (id, msg) => {
         const y = window.scrollY;
         state.ledgerExpand = id || null;
         render().then(() => { window.scrollTo(0, y); if (msg) toast(msg); });
       }
-    };
+    });
     wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-4px 2px 8px' }, '点击任意流水可展开详情，直接改金额 / 日期 / 备注'));
     const byYear = {};
     list.forEach((t) => {
@@ -1119,7 +1280,11 @@ async function projectDetailView(id) {
         });
         Projects.save(np).then(() => { toast('已创建副本，请修改项目名称'); location.hash = '#/project/' + np.id; projectForm(np); });
       }, '复制项目');
-    } }, '⧉ 复制'),
+    }     }, '⧉ 复制'),
+    h('button', { class: 'btn ghost', title: '与其它项目横向对比', onclick: () => {
+      state.cmpProjects = [p.id];
+      location.hash = '#/compare';
+    } }, '🆚 对比'),
     h('button', { class: 'btn danger', onclick: () => confirmDialog('删除该项目会一并删除其下所有记账与提醒，可在「设置 → 数据安全 → 回收站」30 天内整体还原。确定？', () => {
       Projects.remove(p.id).then(() => { toast('已删除，可在回收站还原'); location.hash = '#/projects'; });
     }, '删除') }, '删除')
@@ -1230,10 +1395,9 @@ async function projectDetailView(id) {
       size: 148, thickness: 26,
       centerValue: MK(ctotal), centerKey: '支出合计',
       onPick: (idx, it) => {
-        state.ledgerDrill = null;
-        state.ledgerProject = id; state.ledgerCat = it.label; state.ledgerSub = 'all';
-        state.ledgerAccount = 'all'; state.ledgerQ = ''; state.ledgerRange = 'all';
-        location.hash = '#/ledger/all';
+        // v2.7.0（C2）：项目详情页的品类下钻也走统一下钻通道（from='compare' 同款来源标记）
+        const ids = pTxList.filter((x) => isExpense(x) && (x.category || '') === it.label).map((x) => x.id);
+        drillToLedger(p.name + ' · ' + it.label, ids, 'stats');
       }
     }));
     catCard.appendChild(h('div', { class: 'chart-caption' }, '点击品类可看本项目的该类支出流水'));
@@ -1384,15 +1548,15 @@ async function projectDetailView(id) {
   if (!txs.length) wrap.appendChild(emptyState('还没有记账', '点右下角 + 记一笔'));
   else {
     if (!locked) wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-4px 2px 8px' }, '点击任意流水可展开详情，直接改金额 / 日期 / 备注'));
-    const pdCtx = {
-      projects: [p], pname: (pid) => (pid === id ? p.name : '未关联项目'),
-      partyId: null, savedMsg: '已更新',
+    // v2.7.0（C2）：统一详情面板上下文（项目详情场景）
+    const pdCtx = makeTxCtx({
+      scope: 'list', projects: [p], pname: (pid) => (pid === id ? p.name : '未关联项目'),
       reopen: (txId, msg) => {
         const y = window.scrollY;
         state.projExpand = txId || null;
         render().then(() => { window.scrollTo(0, y); if (msg) toast(msg); });
       }
-    };
+    });
     const list = h('div', { class: 'card' });
     for (const t of txs) {
       const isTr = isTransfer(t);
@@ -1548,6 +1712,16 @@ function reconCard(p, st, allTxs, allProjects) {
     h('div', { class: 'sub' }, '往来 ' + st.count + ' 笔 · 应付 ' + M(st.expenseTotal) + ' · 应收 ' + M(st.incomeTotal)),
     h('span', { class: 'muted', style: 'font-size:var(--g-fs-md);flex:0 0 auto' }, '对账单 ›')
   ]));
+  // v2.7.0（C2）：对账页也提供统一下钻出口——锁定该单位全部流水到流水页，提示条样式与统计下钻一致
+  const ids = allTxs.filter((t) => t.partyId === p.id).map((t) => t.id);
+  if (ids.length) {
+    card.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px' }, [
+      h('button', { class: 'btn sm ghost', onclick: (e) => {
+        e.stopPropagation();
+        drillToLedger(p.name + ' · 全部往来', ids, 'recon');
+      } }, '📊 看流水（' + ids.length + '）')
+    ]));
+  }
   return card;
 }
 
@@ -1748,10 +1922,12 @@ function partyStatement(p, allTxs, allProjects, optsIn) {
   }
 
   // v2.5.0：明细行可点击展开详情并直接改单；改单后一律走 reopenStatement 从库里重建
-  const ctx = {
+  // v2.7.0（C2）：统一详情面板上下文（对账单场景）
+  const ctx = makeTxCtx({
+    scope: 'statement',
     p: p, partyId: p.id, projects: allProjects, pname: pname,
     reopen: (expandId, msg) => reopenStatement(p.id, expandId, msg)
-  };
+  });
   body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '流水明细（' + rel.length + ' 笔）'));
   if (!rel.length) {
     body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' }, '该单位暂无流水'));
@@ -1974,7 +2150,7 @@ function txDetailPanel(t, ctx) {
     saveBtn.disabled = true; saveBtn.textContent = '保存中…';
     const r = await applyTxPatch(t.id, patch);
     if (!r.ok) { saveBtn.disabled = false; saveBtn.textContent = '💾 保存修改'; toast(r.msg); return; }
-    ctx.reopen(t.id, ctx.savedMsg || '已更新，对账单已同步');
+    ctx.reopen(t.id, ctx.savedMsg || '已更新');
   } }, '💾 保存修改');
   acts.appendChild(saveBtn);
   acts.appendChild(h('button', { class: 'btn sm ghost', onclick: () => {
@@ -1985,7 +2161,7 @@ function txDetailPanel(t, ctx) {
           const moved = saved && saved.partyId !== ctx.partyId;
           ctx.reopen(moved ? null : (saved && saved.id), moved ? '该流水已改挂到其他往来单位，已从本对账单移出' : '已保存，对账单已同步');
         } else {
-          ctx.reopen(saved && saved.id, '已保存');
+          ctx.reopen(saved && saved.id, ctx.savedMsg || '已保存');
         }
       }
     });
@@ -2000,6 +2176,23 @@ function txDetailPanel(t, ctx) {
   acts.appendChild(h('button', { class: 'btn sm ghost', onclick: () => ctx.reopen(null) }, '收起'));
   box.appendChild(acts);
   return box;
+}
+
+// v2.7.0（C2）：详情面板上下文的统一工厂——三处（对账单 / 流水页 / 项目详情）
+// 行为契约一致：同样的字段展示、同样的快改校验、同样的按钮、同样的提示口径。
+// scope: 'statement'（对账单弹窗）| 'list'（流水页 / 项目详情）
+function makeTxCtx(o) {
+  o = o || {};
+  const scope = o.scope || 'list';
+  const savedMsg = o.savedMsg || (scope === 'statement' ? '已更新，对账单已同步' : '已更新，列表已同步');
+  return {
+    scope: scope,
+    projects: o.projects || [],
+    pname: o.pname || (() => '未关联项目'),
+    partyId: (o.partyId == null ? null : o.partyId),
+    savedMsg: savedMsg,
+    reopen: o.reopen || (() => render())
+  };
 }
 
 // 查看账单凭证：图片弹窗预览，PDF 内嵌预览；关闭后重开对账单（reopen）
@@ -2355,14 +2548,6 @@ function topNItems(list, n, fmt) {
     text: fmt ? fmt(rest) : ('¥' + compactNum(rest)), idx: -1
   }]);
 }
-// 统计下钻：把「当前口径锁定的一组流水 id」交给流水页，比按区间回查精确
-function statsDrill(label, ids) {
-  state.ledgerDrill = { label: label, ids: ids || [] };
-  state.ledgerCat = 'all'; state.ledgerSub = 'all'; state.ledgerAccount = 'all';
-  state.ledgerProject = 'all'; state.ledgerQ = ''; state.ledgerRange = 'all';
-  location.hash = '#/ledger/all';
-}
-
 // 支出品类分析卡（v2.4.0）：环形图 + 一级/二级下钻 + 与上期对比
 function expCatCard(inRange, prevList, prevLabel, rangeLabel) {
   const agg = expCatAgg(inRange);
@@ -2980,6 +3165,254 @@ async function cycleForm(it, onSaved) {
   openModal(it.id ? '编辑周期项' : '添加周期项', f, [h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消')]);
 }
 
+// ---------- 多项目横向对比（C1，v2.7.0）----------
+// 同时看多个项目的收 / 支 / 利润，支持时间筛选与同比（本期 vs 去年同期），可导出 CSV。
+// 口径：按「流水发生日期」统计（对比表更关心实际发生的钱，与统计页的开工年口径互补）。
+async function compareView() {
+  setPageTitle('项目对比');
+  const [projects, txs] = await Promise.all([Projects.all(), Transactions.all()]);
+  const wrap = h('div');
+
+  if (!projects.length) {
+    wrap.appendChild(emptyState('还没有项目', '点右下角 + 新建项目'));
+    return wrap;
+  }
+
+  // ---- 项目选择（多选，至少 1 个）----
+  const sel = state.cmpProjects.slice();
+  const card = h('div', { class: 'card' });
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '选择要对比的项目（可多选）'));
+  const pchips = h('div', { class: 'chips', style: 'margin-top:8px' });
+  projects.forEach((p) => {
+    const on = sel.indexOf(p.id) >= 0;
+    pchips.appendChild(h('button', { class: 'chip' + (on ? ' on' : ''), onclick: () => {
+      const i = sel.indexOf(p.id);
+      if (i >= 0) { if (sel.length > 1) sel.splice(i, 1); }
+      else sel.push(p.id);
+      state.cmpProjects = sel;
+      render();
+    } }, p.name));
+  });
+  card.appendChild(pchips);
+  const quick = h('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' }, [
+    h('button', { class: 'btn sm ghost', onclick: () => { state.cmpProjects = projects.map((p) => p.id); render(); } }, '全选'),
+    h('button', { class: 'btn sm ghost', onclick: () => { state.cmpProjects = []; render(); } }, '清空')
+  ]);
+  card.appendChild(quick);
+  wrap.appendChild(card);
+
+  if (!sel.length) {
+    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);text-align:center;padding:16px' }, '请先选择至少一个项目'));
+    return wrap;
+  }
+
+  // ---- 时间筛选 ----
+  const ranges = [
+    { key: 'all', label: '全部时间' },
+    { key: 'year', label: '本年' },
+    { key: 'lastyear', label: '去年' },
+    { key: 'h1', label: '近半年' },
+    { key: 'custom', label: '自定义' }
+  ];
+  const rc = h('div', { class: 'card' });
+  rc.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '时间范围（按流水发生日期）'));
+  const rpills = h('div', { class: 'pill-tabs', style: 'margin-top:8px' });
+  ranges.forEach((r) => {
+    rpills.appendChild(h('button', { class: 'pill' + (state.cmpRange === r.key ? ' on' : ''), onclick: () => {
+      state.cmpRange = r.key;
+      if (r.key === 'custom' && !state.cmpCustom) {
+        const now = new Date();
+        state.cmpCustom = { from: now.getFullYear() + '-01-01', to: today() };
+      }
+      render();
+    } }, r.label));
+  });
+  rc.appendChild(rpills);
+  if (state.cmpRange === 'custom' && state.cmpCustom) {
+    const from = h('input', { class: 'ctl', type: 'date', value: state.cmpCustom.from, style: 'flex:1;min-width:0' });
+    const to = h('input', { class: 'ctl', type: 'date', value: state.cmpCustom.to, style: 'flex:1;min-width:0' });
+    from.addEventListener('change', () => { state.cmpCustom.from = from.value; render(); });
+    to.addEventListener('change', () => { state.cmpCustom.to = to.value; render(); });
+    rc.appendChild(h('div', { class: 'dim-row' }, [h('span', { class: 'dim-k' }, '区间'), from, to]));
+  }
+  wrap.appendChild(rc);
+
+  // ---- 计算本期 / 去年同期 ----
+  const now = new Date();
+  const y = now.getFullYear();
+  let from = '0000-01-01', to = '9999-12-31', label = '全部时间';
+  if (state.cmpRange === 'year') { from = y + '-01-01'; to = y + '-12-31'; label = y + ' 年'; }
+  else if (state.cmpRange === 'lastyear') { from = (y - 1) + '-01-01'; to = (y - 1) + '-12-31'; label = (y - 1) + ' 年'; }
+  else if (state.cmpRange === 'h1') {
+    const d = new Date(); d.setMonth(d.getMonth() - 5); d.setDate(1);
+    from = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-01'; to = today(); label = '近半年';
+  } else if (state.cmpRange === 'custom' && state.cmpCustom) {
+    from = state.cmpCustom.from; to = state.cmpCustom.to; label = fmtMD(from) + '～' + fmtMD(to);
+  }
+  // 去年同期区间（按日历平移一年）
+  const lyFrom = shiftYear(from, -1), lyTo = shiftYear(to, -1);
+
+  const inRange = (t, f, tt) => { const d = fmtDate(t.date); return d >= f && d <= tt; };
+  const sumOf = (pid, f, tt) => {
+    let inc = 0, exp = 0, cnt = 0;
+    txs.forEach((t) => {
+      if (t.projectId !== pid || !inRange(t, f, tt)) return;
+      cnt++;
+      if (isIncome(t)) inc += Number(t.amount) || 0;
+      else if (isExpense(t)) exp += Number(t.amount) || 0;
+    });
+    return { inc: inc, exp: exp, profit: inc - exp, count: cnt };
+  };
+
+  const rows = sel.map((pid) => {
+    const p = projects.find((x) => x.id === pid) || { id: pid, name: '未知项目' };
+    const cur = sumOf(pid, from, to);
+    const prev = sumOf(pid, lyFrom, lyTo);
+    const contract = Number(p.contractAmount) || 0;
+    return {
+      p: p, cur: cur, prev: prev, contract: contract,
+      margin: cur.inc > 0 ? cur.profit / cur.inc * 100 : null,
+      recvRate: contract > 0 ? Math.min(100, cur.inc / contract * 100) : null
+    };
+  });
+
+  // ---- 汇总卡 ----
+  const tInc = rows.reduce((s, r) => s + r.cur.inc, 0);
+  const tExp = rows.reduce((s, r) => s + r.cur.exp, 0);
+  const tCount = rows.reduce((s, r) => s + r.cur.count, 0);
+  const sumCard = h('div', { class: 'card sum-card' });
+  sumCard.appendChild(h('div', { class: 'sum-label' }, label + ' · ' + rows.length + ' 个项目 · ' + tCount + ' 笔'));
+  sumCard.appendChild(h('div', { class: 'sum-main' }, [h('span', { class: 'sum-k' }, '合计利润 '), h('span', { class: 'sum-v' }, M(tInc - tExp))]));
+  sumCard.appendChild(h('div', { class: 'sum-sub' }, '收 ' + M(tInc) + ' ｜ 支 ' + M(tExp)));
+  wrap.appendChild(sumCard);
+
+  // ---- 收支柱状对比 ----
+  wrap.appendChild(h('h2', { class: 'section' }, '收支对比'));
+  const barCard = h('div', { class: 'card' });
+  barCard.appendChild(groupedBars({
+    items: rows.map((r) => ({
+      label: r.p.name.length > 6 ? r.p.name.slice(0, 6) : r.p.name,
+      a: r.cur.inc, b: r.cur.exp, aText: M(r.cur.inc), bText: M(r.cur.exp)
+    })),
+    aName: '收入', bName: '支出', h: 160, labelLen: 6,
+    onPick: (i) => { location.hash = '#/project/' + rows[i].p.id; }
+  }));
+  barCard.appendChild(chartLegend([
+    { name: '收入', color: 'var(--income)' },
+    { name: '支出', color: 'var(--expense)' }
+  ]));
+  barCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' }, [
+    h('button', { class: 'btn sm ghost', onclick: () => {
+      const ids = rows.map((r) => r.p.id);
+      // v2.7.0（C2）：对比页也走统一下钻通道
+      const txIds = [];
+      txs.forEach((t) => { if (ids.indexOf(t.projectId) >= 0) txIds.push(t.id); });
+      drillToLedger(label + ' · ' + rows.length + ' 个项目', txIds, 'compare');
+    } }, '📊 在流水页查看')
+  ]));
+  barCard.appendChild(h('div', { class: 'chart-caption' }, '点击柱体进入该项目详情'));
+  wrap.appendChild(barCard);
+
+  // ---- 同比分析 ----
+  const hasPrev = rows.some((r) => r.prev.inc || r.prev.exp);
+  wrap.appendChild(h('h2', { class: 'section' }, '同比分析（本期 vs 去年同期）'));
+  if (!hasPrev) {
+    wrap.appendChild(h('div', { class: 'card', style: 'text-align:center;color:var(--text-dim);padding:16px' },
+      '去年同期没有流水数据，无法同比。换个时间范围试试。'));
+  } else {
+    const cmpCard = h('div', { class: 'card' });
+    const delta = (a, b) => (b > 0 ? Math.round((a - b) / b * 100) : (a > 0 ? 100 : 0));
+    const fmtD = (v) => (v > 0 ? '↑' : v < 0 ? '↓' : '→') + (v === 0 ? '持平' : Math.abs(v) + '%');
+    const colOf = (v) => (v > 0 ? 'var(--danger)' : v < 0 ? 'var(--income)' : 'var(--text-dim)');
+    rows.forEach((r) => {
+      const dInc = delta(r.cur.inc, r.prev.inc);
+      const dExp = delta(r.cur.exp, r.prev.exp);
+      const dNet = delta(r.cur.profit, r.prev.profit);
+      cmpCard.appendChild(h('div', { class: 'tr-row' }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, r.p.name),
+          h('div', { class: 'meta' }, '本期 收 ' + M(r.cur.inc) + ' / 支 ' + M(r.cur.exp) + ' ｜ 去年 收 ' + M(r.prev.inc) + ' / 支 ' + M(r.prev.exp)),
+          h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:4px' }, [
+            h('span', { class: 'delta-chip' }, ['收入 ', h('span', { class: 'd', style: 'color:' + colOf(dInc) }, fmtD(dInc))]),
+            h('span', { class: 'delta-chip' }, ['支出 ', h('span', { class: 'd', style: 'color:' + colOf(dExp) }, fmtD(dExp))]),
+            h('span', { class: 'delta-chip' }, ['利润 ', h('span', { class: 'd', style: 'color:' + colOf(dNet) }, fmtD(dNet))])
+          ])
+        ]),
+        h('div', { class: 'tr-r' }, [
+          h('div', { class: 'amt ' + (r.cur.profit < 0 ? 'expense' : 'income') }, M(r.cur.profit)),
+          h('div', { class: 'meta' }, '去年 ' + M(r.prev.profit))
+        ])
+      ]));
+    });
+    cmpCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:8px' }, '去年同期区间：' + lyFrom + ' ～ ' + lyTo));
+    wrap.appendChild(cmpCard);
+  }
+
+  // ---- 明细表（每项目关键指标）----
+  wrap.appendChild(h('h2', { class: 'section' }, '指标明细'));
+  const tbl = h('div', { class: 'card', style: 'padding:4px 14px' });
+  rows.forEach((r, i) => {
+    tbl.appendChild(h('div', { style: 'padding:10px 0' + (i < rows.length - 1 ? ';border-bottom:1px solid var(--border)' : '') }, [
+      h('div', { class: 'row-between' }, [
+        h('div', { style: 'min-width:0' }, [
+          h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, r.p.name),
+          h('div', { class: 'meta' }, '合同额 ' + M(r.contract) + (r.p.manager ? ' · ' + r.p.manager : '') + (r.p.startDate ? ' · 开工 ' + fmtDate(r.p.startDate) : ''))
+        ]),
+        h('span', { class: 'amt ' + (r.cur.profit < 0 ? 'expense' : 'income') }, M(r.cur.profit))
+      ]),
+      h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;margin-top:4px' }, [
+        h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '毛利率 ' + (r.margin == null ? '—' : r.margin.toFixed(1) + '%')),
+        h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '回款率 ' + (r.recvRate == null ? '—' : Math.round(r.recvRate) + '%')),
+        h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '笔数 ' + r.cur.count)
+      ])
+    ]));
+  });
+  wrap.appendChild(tbl);
+
+  // ---- 导出 ----
+  wrap.appendChild(h('div', { style: 'display:flex;gap:8px;margin:2px 0 8px;flex-wrap:wrap' }, [
+    h('button', { class: 'btn sm ghost', style: 'flex:1;min-width:150px', onclick: () => exportCompareCsv(rows, label, from, to, lyFrom, lyTo) }, '⬇ 导出对比表 CSV'),
+    h('button', { class: 'btn sm ghost', style: 'flex:1;min-width:150px', onclick: () => { location.hash = '#/stats'; } }, '统计报表 ›')
+  ]));
+
+  return wrap;
+}
+
+// 日期区间平移一年（同比用）
+function shiftYear(d, delta) {
+  if (!d || d === '0000-01-01') return d;
+  const p = String(d).split('-');
+  const y = Number(p[0]) + delta;
+  const m = p[1] || '01', dd = p[2] || '01';
+  const last = new Date(y, Number(m), 0).getDate();
+  return y + '-' + m + '-' + pad2(Math.min(Number(dd), last));
+}
+
+// 导出多项目对比 CSV（带 BOM）
+function exportCompareCsv(rows, label, from, to, lyFrom, lyTo) {
+  const head = ['项目名称', '合同额', '本期区间', '本期收入', '本期支出', '本期利润', '本期笔数',
+    '毛利率', '回款率', '去年同期区间', '去年收入', '去年支出', '去年利润', '收入同比', '支出同比', '利润同比'];
+  const lines = [head.join(',')];
+  const esc = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const delta = (a, b) => (b > 0 ? Math.round((a - b) / b * 100) : (a > 0 ? 100 : 0));
+  rows.forEach((r) => {
+    lines.push([
+      esc(r.p.name), esc(r.contract), esc(from + '~' + to), esc(r.cur.inc), esc(r.cur.exp), esc(r.cur.profit), esc(r.cur.count),
+      esc(r.margin == null ? '' : r.margin.toFixed(1) + '%'), esc(r.recvRate == null ? '' : Math.round(r.recvRate) + '%'),
+      esc(lyFrom + '~' + lyTo), esc(r.prev.inc), esc(r.prev.exp), esc(r.prev.profit),
+      esc(delta(r.cur.inc, r.prev.inc) + '%'), esc(delta(r.cur.exp, r.prev.exp) + '%'), esc(delta(r.cur.profit, r.prev.profit) + '%')
+    ].join(','));
+  });
+  const csv = '﻿' + lines.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '项目对比_' + label.replace(/[\\/:*?"<>|]/g, '') + '_' + today() + '.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast('已导出 ' + rows.length + ' 个项目的对比表');
+}
+
 async function mineView() {
   setPageTitle('我的');
   const [txs, accounts, projects] = await Promise.all([Transactions.all(), getAccounts(), Projects.all()]);
@@ -3059,7 +3492,8 @@ async function mineView() {
   [['⚙️ 系统设置', '#/settings', '提醒预警 · 外观主题 · 账户 · 分类 · 模板 · 备份'],
    ['🤝 往来单位管理', '#/parties', '往来单位增删改维护'],
    ['📊 统计报表', '#/stats', '多维拆解 · 月度走势 · 导出'],
-   ['📈 资金缺口预测', '#/forecast', '未来 8 周现金流 · 缺口预警']
+   ['📈 资金缺口预测', '#/forecast', '未来 8 周现金流 · 缺口预警'],
+   ['🆚 多项目对比', '#/compare', '多项目横向对比 · 同比 · 导出']
   ].forEach(([t, hsh, sub]) => {
     wrap.appendChild(h('div', { class: 'list-item party-clickable', onclick: () => { location.hash = hsh; } }, [
       h('div', { style: 'min-width:0' }, [
@@ -3079,7 +3513,22 @@ async function settingsView() {
   const alertPct = await Meta.get('budgetAlertPct', 80);
   const stageAlertDays = await Meta.get('stageAlertDays', 3);
   const wrap = h('div');
-  wrap.appendChild(h('h2', { class: 'section' }, '提醒与预警'));
+
+  // v2.7.0（C3）：分组容器——每个分组一个 div，底部只把当前分组挂到页面上
+  const G = {};
+  SETTINGS_GROUPS.forEach((gp) => { G[gp.key] = h('div', { class: 'set-group' }); });
+
+  // 分组导航（Tab）
+  const cur = SETTINGS_GROUPS.some((gp) => gp.key === state.setGroup) ? state.setGroup : 'remind';
+  const tabBar = h('div', { class: 'set-tabs' });
+  SETTINGS_GROUPS.forEach((gp) => {
+    tabBar.appendChild(h('button', { class: 'set-tab' + (gp.key === cur ? ' on' : ''), onclick: () => { state.setGroup = gp.key; render(); } },
+      gp.icon + ' ' + gp.label));
+  });
+  wrap.appendChild(tabBar);
+  const curGp = SETTINGS_GROUPS.filter((gp) => gp.key === cur)[0];
+  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-2px 2px 10px' }, curGp ? curGp.desc : ''));
+
   const rCard = h('div', { class: 'card' });
 
   // 系统通知权限
@@ -3137,10 +3586,10 @@ async function settingsView() {
       Meta.set('stageAlertDays', Math.max(0, Number(stageInp.value) || 0))
     ]).then(() => toast('已保存提醒与预警设置'));
   } }, '保存'));
-  wrap.appendChild(rCard);
+  G.remind.appendChild(rCard);
 
   // 外观（v1.9.0）：暖纸账本 / 墨绿夜读，即点即生效并持久化到 meta.theme（旧 light 值自动归入暖纸）
-  wrap.appendChild(h('h2', { class: 'section' }, '外观'));
+  // 外观分组标题由 Tab 承担，不再重复渲染 h2
   const themeSaved = await Meta.get('theme', 'paper');
   const themeCard = h('div', { class: 'card' });
   const themeSeg = h('div', { class: 'seg' });
@@ -3157,10 +3606,10 @@ async function settingsView() {
   themeSeg.appendChild(tPaper); themeSeg.appendChild(tDark);
   themeCard.appendChild(themeSeg);
   themeCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:8px' }, '暖纸账本：米色纸面质感，支出以朱砂红标注；墨绿夜读适合夜间弱光。设置立即生效并自动记忆'));
-  wrap.appendChild(themeCard);
+  G.look.appendChild(themeCard);
 
   // 施工阶段模板：独立编辑卡已停用（与「进度计划模板→工装」是同一份数据 meta.stageTemplate，统一在工装 tab 维护，避免双入口 confusion）
-  wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:2px 2px 0' },
+  G.plan.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:2px 2px 0' },
     'ℹ️ 默认施工阶段（新建项目自动带入、工装模板的阶段名）请到下方「进度计划模板」选「工装进度模板」维护。'));
 
   // 进度计划模板（按装修类型：别墅/平层/跃层/工装，源自内置参考表，可改）
@@ -3217,7 +3666,7 @@ async function settingsView() {
       Meta.set('planTemplates', tpls).then(() => toast('已保存' + ((PLAN_TYPES.find((t) => t.id === ptType) || {}).label) + '进度模板'));
     }
   } }, '保存模板'));
-  wrap.appendChild(planTplCard);
+  G.plan.appendChild(planTplCard);
 
   // 账户管理
   const accCard = h('div', { class: 'card' });
@@ -3246,7 +3695,7 @@ async function settingsView() {
       Meta.set('accounts', cleaned).then(() => toast('已保存账户'));
     } }, '保存账户'));
   });
-  wrap.appendChild(accCard);
+  G.ledger.appendChild(accCard);
 
   // 分类层级（一级 ＞ 二级）——统一分类：记账分类与预算计划类别共用同一棵树
   const treeCard = h('div', { class: 'card' });
@@ -3285,7 +3734,7 @@ async function settingsView() {
       Meta.set('catTree', cleaned).then(() => toast('已保存分类层级'));
     } }, '保存分类层级'));
   });
-  wrap.appendChild(treeCard);
+  G.ledger.appendChild(treeCard);
 
   // 记账模板（完整维度：类型/金额/分类/账户/成员/商家/备注）
   const tplCard2 = h('div', { class: 'card' });
@@ -3314,10 +3763,10 @@ async function settingsView() {
       templateForm(tp, renderTpls);
     } }, '+ 添加模板'));
   });
-  wrap.appendChild(tplCard2);
+  G.ledger.appendChild(tplCard2);
 
   // ---------- 周期记账（v2.6.0）：固定收支到期生成待确认，点确认才入账 ----------
-  wrap.appendChild(h('h2', { class: 'section' }, '周期记账'));
+  // 周期记账归入「记账配置」分组
   const cyCard = h('div', { class: 'card' });
   const cyItems = await getCycleItems();
   const cyPending = await cyclePending();
@@ -3357,7 +3806,7 @@ async function settingsView() {
   }
   cyCard.appendChild(cyList);
   cyCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:8px', onclick: () => cycleForm({ id: uid(), type: 'expense', day: 1, active: true }, render) }, '+ 添加周期项'));
-  wrap.appendChild(cyCard);
+  G.ledger.appendChild(cyCard);
 
   // ---------- 数据安全（v2.0.0）：本地快照 + 回收站 ----------
   const fmtBytes = (n) => {
@@ -3376,7 +3825,7 @@ async function settingsView() {
   };
   const SNAP_KIND = { auto: { t: '自动', c: 'paid' }, manual: { t: '手动', c: 'ongoing' }, 'pre-import': { t: '导入前', c: 'unpaid' } };
 
-  wrap.appendChild(h('h2', { class: 'section' }, '数据安全'));
+  // 数据安全分组标题由 Tab 承担
   const dsCard = h('div', { class: 'card' });
   const lastAuto = await Meta.get('lastAutoSnapshotAt', 0);
   const snaps = await Snapshots.all();
@@ -3427,7 +3876,7 @@ async function settingsView() {
     dsCard.appendChild(sl);
   }
   dsCard.appendChild(dsMsg);
-  wrap.appendChild(dsCard);
+  G.data.appendChild(dsCard);
 
   // 回收站
   const groups = {};
@@ -3473,7 +3922,7 @@ async function settingsView() {
     });
     trCard.appendChild(tl);
   }
-  wrap.appendChild(trCard);
+  G.data.appendChild(trCard);
 
   // 演示数据（v2.6.0）：还原演示 / 清空为空白账本，两种操作前都自动存快照
   const isDemo = await Meta.get('demoMode', false);
@@ -3503,7 +3952,7 @@ async function settingsView() {
       }, isDemo ? '开始记账' : '清空数据');
     } }, isDemo ? '🧹 清空演示，开始记账' : '🧹 清空为空白账本')
   ]));
-  wrap.appendChild(demoCard);
+  G.data.appendChild(demoCard);
 
   // 备份与恢复（全量 JSON，含照片凭证）
   const bkCard = h('div', { class: 'card' });
@@ -3554,12 +4003,14 @@ async function settingsView() {
   });
   bkCard.appendChild(bkFile);
   bkCard.appendChild(bkMsg);
-  wrap.appendChild(bkCard);
+  G.data.appendChild(bkCard);
+
+  // v2.7.0（C3）：只挂载当前分组
+  if (G[cur]) wrap.appendChild(G[cur]);
 
   wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:18px' }, '关于'));
   wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:var(--g-fs-md);line-height:1.7' },
     '装修记账 · 本地版（PWA）。所有数据仅保存在本机浏览器，不上传任何服务器。可在安卓 Chrome 中“添加到主屏幕”当作 App 使用。当前为 P1：项目管理、记账（含照片/开票/更细维度）、往来单位、首页看板。'));
-
   return wrap;
 }
 

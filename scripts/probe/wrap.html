@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=400, initial-scale=1"></head>
+<body style="margin:0;background:#333">
+<iframe id="f" src="/_probe/app.html" style="width:400px;height:890px;border:0;display:block"></iframe>
+<script>
+  // 轮询把 iframe 探针结果带到父页（headless --dump-dom 读父页的 data-b64）
+  var t0 = Date.now();
+  setInterval(function () {
+    try {
+      var d = document.getElementById('f').contentDocument.getElementById('probeout');
+      if (d && d.getAttribute('data-b64')) {
+        document.body.setAttribute('data-b64', d.getAttribute('data-b64'));
+        var raw = decodeURIComponent(escape(atob(d.getAttribute('data-b64'))));
+        if (/"done":true/.test(raw) || Date.now() - t0 > 90000) return;
+      }
+    } catch (e) {}
+  }, 600);
+</script>
+</body>
+</html>
