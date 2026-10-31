@@ -1,0 +1,105 @@
+# -------------------------------------
+# 依赖目录
+# -------------------------------------
+node_modules/
+jspm_packages/
+.pnp/
+.pnp.js
+.yarn/
+.pnp.cjs
+
+# -------------------------------------
+# 构建产物
+# -------------------------------------
+dist/
+dist-ssr/
+build/
+out/
+*.tsbuildinfo
+.next/
+.nuxt/
+.output/
+.svelte-kit/
+.temp/
+.cache/
+
+# -------------------------------------
+# 测试与覆盖率
+# -------------------------------------
+coverage/
+*.lcov
+.nyc_output/
+playwright-report/
+test-results/
+
+# -------------------------------------
+# 日志
+# -------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# -------------------------------------
+# 环境变量与本地密钥（保留示例模板）
+# -------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# -------------------------------------
+# 编辑器 / IDE
+# -------------------------------------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.codebuddy/settings.local.json
+
+# -------------------------------------
+# 操作系统 / 系统文件
+# -------------------------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# -------------------------------------
+# 其他临时/备份文件
+# -------------------------------------
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.swp
+*.swo
+.eslintcache
+.stylelintcache
