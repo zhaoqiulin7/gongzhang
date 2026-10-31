@@ -1,0 +1,19 @@
+{
+  "name": "装修记账",
+  "short_name": "装修记账",
+  "description": "装饰装修业务工程项目记账与收付款提醒工具",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1411",
+  "theme_color": "#1f6f54",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
