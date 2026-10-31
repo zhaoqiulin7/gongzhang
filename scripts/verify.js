@@ -177,7 +177,27 @@ remBlock.split('\n').forEach((ln) => {
 });
 ok('演示提醒到期日均在 8 周窗口内');
 
-// ---------- 5. 汇总 ----------
+// ---------- 5. 安卓构建环境（阶段 0 固化）----------
+head('[5] 安卓构建环境');
+const envSh = exists('scripts/env.sh') ? read('scripts/env.sh') : '';
+if (!envSh) {
+  warn('未找到 scripts/env.sh（安卓构建环境未固化）');
+} else {
+  ok('scripts/env.sh 存在');
+  // 必须锁定 JDK 21（系统 JDK 27 过新，Gradle 会报 class file major version 71）
+  if (envSh.indexOf('jdk21') < 0 || envSh.indexOf('JAVA_HOME') < 0) bad('env.sh 未锁定 JDK 21');
+  else ok('env.sh 已锁定 JDK 21');
+  // Gradle 镜像（官方源本机不通）
+  if (envSh.indexOf('mirrors.cloud.tencent.com') < 0) bad('env.sh 未配置 Gradle 镜像');
+  else ok('env.sh 已配置 Gradle 镜像');
+  // 构建脚本必须带 --no-build-cache（Windows transforms 目录锁）
+  const buildSh = exists('scripts/build-android.sh') ? read('scripts/build-android.sh') : '';
+  if (!buildSh) warn('未找到 scripts/build-android.sh');
+  else if (buildSh.indexOf('--no-build-cache') < 0) bad('build-android.sh 缺少 --no-build-cache');
+  else ok('build-android.sh 已含 --no-build-cache');
+}
+
+// ---------- 汇总 ----------
 head('─── 结果 ───');
 console.log('失败 ' + fails + ' 项，警告 ' + warns + ' 项');
 process.exit(fails ? 1 : 0);
