@@ -4436,7 +4436,9 @@ async function settingsView() {
   // 放假天数（用非闰年 2026 计算区间天数，仅用于展示「共N天」）
   function dayDiff(a, b) { return Math.round((new Date(2026, b[0] - 1, b[1]) - new Date(2026, a[0] - 1, a[1])) / 86400000) + 1; }
   function fmtDesc(name, a, b, makeup) {
-    let t = name + '：' + a[0] + '月' + a[1] + '日至' + b[0] + '月' + b[1] + '日放假调休，共' + dayDiff(a, b) + '天。';
+    // 同月省略结束月：如「1月1日至3日」；跨月才写全「1月30日至2月2日」
+    const endTxt = (b[0] === a[0]) ? (b[1] + '日') : (b[0] + '月' + b[1] + '日');
+    let t = name + '：' + a[0] + '月' + a[1] + '日至' + endTxt + '放假调休，共' + dayDiff(a, b) + '天。';
     if (makeup && makeup.length) t += makeup.map((m) => m[0] + '月' + m[1] + '日').join('、') + '上班。';
     return t;
   }
