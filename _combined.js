@@ -2497,12 +2497,46 @@ const HOLIDAYS_BUILTIN = (function () {
   return out;
 })();
 
-/** 节假日集合（内置 + 用户自定义），键为 'YYYY-MM-DD' */
+/** 固定节日结构化配置（默认参考 2026 安排；用户可在「设置→项目模板→节假日」按年修改） */
+const HOLIDAY_CFG_DEFAULT = [
+  { key: 'yuandan', name: '元旦', start: [1, 1], end: [1, 3], makeup: [[1, 4]] },
+  { key: 'chunjie', name: '春节', start: [2, 15], end: [2, 22], makeup: [[2, 14], [2, 28]] },
+  { key: 'qingming', name: '清明节', start: [4, 4], end: [4, 6], makeup: [] },
+  { key: 'laodong', name: '劳动节', start: [5, 1], end: [5, 5], makeup: [[5, 9]] },
+  { key: 'duanwu', name: '端午节', start: [6, 19], end: [6, 21], makeup: [] },
+  { key: 'zhongqiu', name: '中秋节', start: [9, 25], end: [9, 27], makeup: [] },
+  { key: 'guoqing', name: '国庆节', start: [10, 1], end: [10, 8], makeup: [[9, 27], [10, 10]] }
+];
+
+/** 把结构化节假日配置展开成『放假日期集合』（跨 y0..y1 年；调休上班日不计入放假，需照常施工） */
+function expandHolidayCfg(cfg, y0, y1) {
+  const set = {};
+  (cfg || []).forEach((it) => {
+    if (!it || !it.start || !it.end) return;
+    for (let y = y0; y <= y1; y++) {
+      const mk = new Set((it.makeup || []).map((m) => ymd(new Date(y, m[0] - 1, m[1]))));
+      const a = new Date(y, it.start[0] - 1, it.start[1]);
+      const b = new Date(y, it.end[0] - 1, it.end[1]);
+      let cur = new Date(a);
+      while (cur <= b) {
+        const k = ymd(cur);
+        if (!mk.has(k)) set[k] = 1; // 调休上班日（补班）不算放假
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+  });
+  return set;
+}
+
+/** 节假日集合（内置 + 结构化配置 + 用户自定义额外项），键为 'YYYY-MM-DD' */
 async function getHolidays() {
   const extra = await Meta.get('holidays', null);
+  const cfg = await Meta.get('holidayCfg', null);
   const set = {};
   HOLIDAYS_BUILTIN.concat(Array.isArray(extra) ? extra : [])
     .forEach((d) => { if (d) set[String(d).slice(0, 10)] = 1; });
+  const cfgSet = expandHolidayCfg(cfg, 2024, 2035);
+  Object.keys(cfgSet).forEach((k) => { set[k] = 1; });
   return set;
 }
 
@@ -3773,18 +3807,35 @@ let _ganttDeps = false;     // 依赖连线 + 关键路径
 let _ganttDrag = false;     // 拖拽改期模式
 let _ganttManual = false;   // 用户是否手动切过方向
 let _lastRoute = '';        // 进出施工进度页时做方向锁定/解锁
+let _ganttOrientHandler = null; // 横屏稳定：方向变化监听（仅甘特页内、非手动时强制拉回横屏）
 
-/** 进入施工进度页：按需锁横屏 */
+/** 进入施工进度页：按需锁横屏（真机稳定锁定版） */
 async function enterSchedule() {
   _ganttManual = false;
   const auto = await Meta.get('ganttAutoLandscape', true);
   if (auto === false) return false;
-  const ok = await Bridge.screen.lock('landscape');
-  return ok;
+  // 锁定是活动级操作；真机上常在转场/布局完成之后才真正生效，补两次重试提高命中率
+  const lock = () => { Bridge.screen.lock('landscape').catch(() => {}); };
+  lock();
+  setTimeout(lock, 350);
+  setTimeout(lock, 900);
+  // 在甘特页内若被系统/用户误转回竖屏（非手动切换），强制拉回横屏，保证「稳定锁定」
+  if (!_ganttOrientHandler) {
+    _ganttOrientHandler = () => {
+      if (_lastRoute === 'gantt' && !_ganttManual) {
+        Bridge.screen.orientation()
+          .then((o) => { if (o !== 'landscape') Bridge.screen.lock('landscape').catch(() => {}); })
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('orientationchange', _ganttOrientHandler);
+  }
+  return true;
 }
-/** 离开施工进度页：解除锁定，恢复跟随系统 */
+/** 离开施工进度页：解除锁定，恢复跟随系统，并移除监听 */
 async function leaveSchedule() {
   _ganttManual = false;
+  if (_ganttOrientHandler) { window.removeEventListener('orientationchange', _ganttOrientHandler); _ganttOrientHandler = null; }
   try { await Bridge.screen.unlock(); } catch (e) { /* ignore */ }
 }
 /** 手动切换方向（用户可控） */
@@ -6694,21 +6745,100 @@ async function settingsView() {
   } }, '保存模板'));
   G.plan.appendChild(planTplCard);
 
-  // —— 节假日（v2.11.0：剔除非工作日时跳过的日期）——
+  // —— 节假日（v2.11.0：剔除非工作日时跳过的日期；结构化配置）——
   const holCard = h('div', { class: 'card' });
   holCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '节假日（剔除非工作日时跳过）'));
   holCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:4px' },
-    '内置 2026-2027 法定节假日参考值。这里填的日期与内置值取并集，一行一个，格式 YYYY-MM-DD。'));
-  const holTa = h('textarea', { class: 'ctl', rows: 4, placeholder: '2026-05-01\n2026-05-02', style: 'margin-top:8px' });
-  Meta.get('holidays', null).then((list) => { holTa.value = (Array.isArray(list) ? list : []).join('\n'); });
-  holCard.appendChild(holTa);
-  holCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:8px', onclick: () => {
-    const lines = String(holTa.value || '').split(/[\n,，\s]+/).map((s) => s.trim())
-      .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s));
-    Meta.set('holidays', lines).then(() => toast('已保存 ' + lines.length + ' 个节假日'));
-  } }, '保存节假日'));
-  holCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:6px' },
-    '新建项目勾选「剔除周末及法定节假日」后，竣工日期会跳过这些日子顺延；每年国务院安排微调时在此补充即可。'));
+    '配置每年固定节日的放假区间与调休上班日；新建项目勾选「剔除周末及法定节假日」后，竣工日期会跳过放假区间顺延。'));
+
+  // 月份 / 日期下拉（选择字段）
+  function mkMonthSel(val, on) {
+    const s = h('select', { style: 'width:auto;padding:4px 6px;font-size:var(--g-fs-sm)' });
+    for (let m = 1; m <= 12; m++) s.appendChild(h('option', { value: m }, m + '月'));
+    s.value = val; s.addEventListener('change', () => on(Number(s.value)));
+    return s;
+  }
+  function mkDaySel(val, on) {
+    const s = h('select', { style: 'width:auto;padding:4px 6px;font-size:var(--g-fs-sm)' });
+    for (let d = 1; d <= 31; d++) s.appendChild(h('option', { value: d }, d + '日'));
+    s.value = val; s.addEventListener('change', () => on(Number(s.value)));
+    return s;
+  }
+  // 放假天数（用非闰年 2026 计算区间天数，仅用于展示「共N天」）
+  function dayDiff(a, b) { return Math.round((new Date(2026, b[0] - 1, b[1]) - new Date(2026, a[0] - 1, a[1])) / 86400000) + 1; }
+  function fmtDesc(name, a, b, makeup) {
+    let t = name + '：' + a[0] + '月' + a[1] + '日至' + b[0] + '月' + b[1] + '日放假调休，共' + dayDiff(a, b) + '天。';
+    if (makeup && makeup.length) t += makeup.map((m) => m[0] + '月' + m[1] + '日').join('、') + '上班。';
+    return t;
+  }
+
+  Meta.get('holidayCfg', null).then((saved) => {
+    const items = (saved && Array.isArray(saved) && saved.length) ? saved : JSON.parse(JSON.stringify(HOLIDAY_CFG_DEFAULT));
+    const listEl = h('div', { style: 'margin-top:10px' });
+
+    function renderItem(it) {
+      const box = h('div', { style: 'padding:9px;border:1px solid var(--border);border-radius:10px;margin-top:8px' });
+      box.appendChild(h('div', { style: 'font-weight:700;font-size:var(--g-fs-md)' }, it.name || it.key));
+
+      // 描述预览（先建节点，后面各选择框改动时实时刷新）
+      const descEl = h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px;color:var(--text);background:var(--surface-2);padding:6px 8px;border-radius:8px' }, '');
+      const refreshDesc = () => { descEl.textContent = fmtDesc(it.name, it.start, it.end, it.makeup); };
+
+      const row1 = h('div', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px' });
+      row1.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '放假'));
+      row1.appendChild(mkMonthSel(it.start[0], (v) => { it.start[0] = v; refreshDesc(); }));
+      row1.appendChild(mkDaySel(it.start[1], (v) => { it.start[1] = v; refreshDesc(); }));
+      row1.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '至'));
+      row1.appendChild(mkMonthSel(it.end[0], (v) => { it.end[0] = v; refreshDesc(); }));
+      row1.appendChild(mkDaySel(it.end[1], (v) => { it.end[1] = v; refreshDesc(); }));
+      box.appendChild(row1);
+
+      const makeupWrap = h('div', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px' });
+      makeupWrap.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '调休上班'));
+      box.appendChild(makeupWrap);
+
+      // 调休上班日列表（可增删；闭包引用本项的 makeupWrap / descEl / it）
+      function renderMakeup() {
+        while (makeupWrap.childNodes.length > 1) makeupWrap.removeChild(makeupWrap.lastChild);
+        (it.makeup || []).forEach((m, i) => {
+          const grp = h('span', { style: 'display:inline-flex;gap:3px;align-items:center' });
+          grp.appendChild(mkMonthSel(m[0], (v) => { it.makeup[i][0] = v; refreshDesc(); }));
+          grp.appendChild(mkDaySel(m[1], (v) => { it.makeup[i][1] = v; refreshDesc(); }));
+          grp.appendChild(h('button', { class: 'delete-x', title: '删除', onclick: () => { it.makeup.splice(i, 1); renderMakeup(); refreshDesc(); } }, '×'));
+          makeupWrap.appendChild(grp);
+        });
+        makeupWrap.appendChild(h('button', { class: 'btn sm ghost', onclick: () => { it.makeup = it.makeup || []; it.makeup.push([1, 1]); renderMakeup(); refreshDesc(); } }, '+ 上班日'));
+      }
+      renderMakeup();
+
+      box.appendChild(descEl);
+      refreshDesc();
+      return box;
+    }
+
+    function renderList() { listEl.innerHTML = ''; items.forEach((it) => listEl.appendChild(renderItem(it))); }
+    renderList();
+    holCard.appendChild(listEl);
+
+    holCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:10px', onclick: () => {
+      const cleaned = items.map((it) => ({
+        key: it.key, name: it.name,
+        start: it.start, end: it.end,
+        makeup: (it.makeup || []).filter((m) => m && m.length === 2 && m[0] >= 1 && m[0] <= 12 && m[1] >= 1 && m[1] <= 31)
+      }));
+      Meta.set('holidayCfg', cleaned).then(() => toast('已保存节假日配置（' + cleaned.length + ' 个）'));
+    } }, '保存节假日配置'));
+
+    // 兼容旧版：一次性额外节假日（YYYY-MM-DD 一行一个，与上方配置取并集）
+    holCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:12px' }, '其它一次性节假日（可选，YYYY-MM-DD 一行一个，与上方配置取并集）'));
+    const extraTa = h('textarea', { class: 'ctl', rows: 3, placeholder: '2026-12-25', style: 'margin-top:6px' });
+    Meta.get('holidays', null).then((list) => { extraTa.value = (Array.isArray(list) ? list : []).join('\n'); });
+    holCard.appendChild(extraTa);
+    holCard.appendChild(h('button', { class: 'btn sm ghost', style: 'margin-top:6px', onclick: () => {
+      const lines = String(extraTa.value || '').split(/[\n,，\s]+/).map((s) => s.trim()).filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s));
+      Meta.set('holidays', lines).then(() => toast('已保存 ' + lines.length + ' 个额外节假日'));
+    } }, '保存额外节假日'));
+  });
   G.plan.appendChild(holCard);
 
   // 账户管理
