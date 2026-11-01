@@ -1,4 +1,4 @@
-const CACHE = 'decor-accounting-v25';
+const CACHE = 'gongzhang-v30';
 const ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,8 @@ const ASSETS = [
   './js/db.js',
   './js/util.js',
   './js/chart.js',
+  './js/gantt.js',
+  './js/bridge.js',
   './js/app.js'
 ];
 

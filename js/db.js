@@ -407,7 +407,12 @@ function b64ToBlob(b64, fallbackType) {
 const BACKUP_STORES = ['projects', 'transactions', 'parties', 'reminders', 'attachments', 'meta'];
 async function exportAll() {
   await initBackend();
-  const out = { app: 'decor-accounting', schema: 1, exportedAt: new Date().toISOString(), stores: {} };
+  // P1-7：写入 schema 版本，导入时用来判断「备份比当前程序新 / 旧」，避免静默丢字段
+  const out = {
+    app: 'decor-accounting', schema: DB_VERSION, dbVersion: DB_VERSION,
+    appVersion: (typeof window !== 'undefined' && window.__GZ_VERSION) || '',
+    exportedAt: new Date().toISOString(), stores: {}
+  };
   for (const name of BACKUP_STORES) {
     const recs = await getAll(name);
     if (name === 'attachments') {
@@ -434,6 +439,11 @@ async function exportAll() {
  */
 async function importAll(data) {
   if (!data || !data.stores) throw new Error('备份文件格式不正确');
+  // P1-7：版本兼容。备份比当前程序更新 → 可能含本版本读不懂的字段，明确提示而不是静默覆盖
+  const bv = Number(data.schema || data.dbVersion || 1);
+  if (bv > DB_VERSION) {
+    throw new Error('备份来自更高版本（schema ' + bv + ' > 当前 ' + DB_VERSION + '），请先升级 App 再导入');
+  }
   await initBackend();
   for (const name of BACKUP_STORES) {
     if (backend === 'idb') await idbReq(idbTx(name, 'readwrite').clear());

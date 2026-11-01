@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 构建双形态产物
+        run: node build.js
+
+      - name: 静态门禁（verify.js）
+        run: node scripts/verify.js
+
+      - name: 上传 www 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: www
+          path: www/
+
+      - name: 上传单文件 PWA
+        uses: actions/upload-artifact@v4
+        with:
+          name: index.html
+          path: index.html

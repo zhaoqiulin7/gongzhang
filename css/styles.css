@@ -7,6 +7,19 @@
    过期机制：废弃 Token 标注「@deprecated <原因> → 用 <替代名>」，保留 2 个 minor 版本后删除；
    新代码禁止引用 @deprecated Token。
    ============================================================ */
+/* —— 安全区（Android edge-to-edge）——
+   targetSdk 35+ 强制内容画进状态栏/手势条区域。Android WebView 的 env(safe-area-inset-*)
+   在部分机型上恒为 0（Chromium bug 461332423），导致真机上顶栏被系统图标压住、
+   底部导航被手势条遮住。Capacitor 核心的 SystemBars 会把真实插值注入
+   --safe-area-inset-*（documentElement 内联样式）。
+   这里统一取「注入值优先，env() 兜底」，全站只引用 --sa-*，两种模式下都不会重复留白。 */
+:root {
+  --sa-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sa-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --sa-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --sa-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+}
+
 :root {
   /* —— 基础层：色板 --g-c-<色相>-<阶> —— */
   --g-c-green-990: #0f1411;
@@ -163,24 +176,25 @@ body {
   line-height: 1.5;
   overscroll-behavior-y: none;
 }
-#app { max-width: 480px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); }
+#app { max-width: var(--app-w); margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); overflow-x: clip; }
 
 #topbar {
   position: sticky; top: 0; z-index: var(--g-z-topbar);
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
-  padding-top: env(safe-area-inset-top);
+  /* 顶栏背景延伸进状态栏，避免出现「白条 + 内容被系统图标压住」 */
+  padding-top: var(--sa-top);
 }
 .topbar-inner { height: 52px; display: flex; align-items: center; padding: 0 var(--g-sp-4); }
 #page-title { font-size: var(--g-fs-xl); font-weight: 700; letter-spacing: .5px; }
 
-#view { flex: 1; padding: var(--g-sp-4) var(--g-sp-4) calc(var(--c-tab-h) + env(safe-area-inset-bottom) + var(--g-sp-4)); }
+#view { flex: 1; padding: var(--g-sp-4) var(--g-sp-4) calc(var(--c-tab-h) + var(--sa-bottom) + var(--g-sp-4)); }
 
 #tabbar {
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
-  width: 100%; max-width: 480px;
-  height: calc(var(--c-tab-h) + env(safe-area-inset-bottom));
-  padding-bottom: env(safe-area-inset-bottom);
+  width: 100%; max-width: var(--app-w);
+  height: calc(var(--c-tab-h) + var(--sa-bottom));
+  padding-bottom: var(--sa-bottom);
   display: flex; background: var(--surface); border-top: 1px solid var(--border); z-index: var(--g-z-tabbar);
 }
 .tab {
@@ -210,7 +224,7 @@ h2.section { font-size: var(--g-fs-lg); margin: var(--g-sp-1) 0 var(--g-sp-3); c
 .card.tap:active { transform: scale(.985); border-color: var(--primary-light); }
 
 .fab {
-  position: fixed; right: max(16px, calc(50% - 480px/2 + 16px)); bottom: calc(var(--c-tab-h) + env(safe-area-inset-bottom) + 18px);
+  position: fixed; right: max(16px, calc(50% - var(--app-w)/2 + 16px)); bottom: calc(var(--c-tab-h) + var(--sa-bottom) + 18px);
   width: 54px; height: 54px; border-radius: 50%; background: var(--primary); color: #fff;
   border: none; font-size: var(--g-fs-fab); box-shadow: var(--g-sh-fab); cursor: pointer; z-index: var(--g-z-fab);
 }
@@ -227,7 +241,11 @@ h2.section { font-size: var(--g-fs-lg); margin: var(--g-sp-1) 0 var(--g-sp-3); c
 .btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
 .btn.ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
 .btn.sm { padding: var(--g-sp-2) var(--g-sp-3); font-size: var(--g-fs-md); width: auto; border-radius: var(--g-r-md); }
-.btn-row { display: flex; gap: var(--g-sp-3); margin-top: var(--g-sp-4); }
+/* 真机反馈（2670×1200 / DPI 460）：项目详情的「编辑/复制/对比/删除」四个按钮
+   在窄屏被挤出屏幕右缘（按钮文案不折行 + .btn 默认 width:100%，min-content 总和超出可用宽）。
+   与 .modal-actions / .tdp-acts 同策略：允许换行 + 自适应宽度，避免横向溢出。 */
+.btn-row { display: flex; flex-wrap: wrap; gap: var(--g-sp-3); margin-top: var(--g-sp-4); }
+.btn-row > .btn:not(.sm) { flex: 1 1 auto; width: auto; min-width: 96px; }
 
 .field { margin-bottom: var(--g-sp-4); }
 .field label { display: block; font-size: var(--g-fs-md); color: var(--text-dim); margin-bottom: var(--g-sp-2); }
@@ -277,8 +295,8 @@ h2.section { font-size: var(--g-fs-lg); margin: var(--g-sp-1) 0 var(--g-sp-3); c
 
 .modal-mask { position: fixed; inset: 0; background: var(--g-c-black-a60); z-index: var(--g-z-modal); display: flex; align-items: flex-end; justify-content: center; }
 .modal {
-  width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--g-r-xl) var(--g-r-xl) 0 0;
-  padding: var(--g-sp-5) var(--g-sp-4) calc(var(--g-sp-5) + env(safe-area-inset-bottom)); max-height: 88vh; max-height: 88dvh; overflow-y: auto;
+  width: 100%; max-width: var(--app-w); background: var(--surface); border-radius: var(--g-r-xl) var(--g-r-xl) 0 0;
+  padding: var(--g-sp-5) var(--g-sp-4) calc(var(--g-sp-5) + var(--sa-bottom)); max-height: 88vh; max-height: 88dvh; overflow-y: auto;
   animation: slideup .2s ease;
 }
 @keyframes slideup { from { transform: translateY(30px); opacity: .6; } to { transform: translateY(0); opacity: 1; } }
@@ -358,6 +376,13 @@ textarea.ctl { resize: vertical; min-height: 44px; }
 .ctl-row .ctl { flex: 1; min-width: 0; }
 .ctl-sep { color: var(--text-dim); font-size: var(--g-fs-sm); flex: 0 0 auto; }
 .frow-x { color: var(--text-dim); background: none; border: none; font-size: var(--g-fs-lg); cursor: pointer; padding: var(--g-sp-1) var(--g-sp-1); flex: 0 0 auto; }
+/* v2.11.0：字段行的「＋ 新增」——点开在本行下方内联展开，新增后回到原界面（不替换整个弹窗） */
+.frow-add { color: var(--income); background: rgba(76,175,120,.10); border: 1px solid var(--border); border-radius: var(--g-r-md);
+  font-size: var(--g-fs-base); line-height: 1; cursor: pointer; padding: 3px 8px; flex: 0 0 auto; }
+.frow-wrap { border-bottom: 1px solid var(--border); }
+.frow-wrap > .frow { border-bottom: none; }
+.inline-add { padding: 0 var(--g-sp-4) var(--g-sp-3); }
+.inline-add .ctl { width: 100%; }
 .mic-btn { background: none; border: none; cursor: pointer; font-size: var(--g-fs-base); padding: var(--g-sp-1) var(--g-sp-1); flex: 0 0 auto; }
 .mic-btn.on { color: var(--danger); }
 
@@ -434,7 +459,7 @@ textarea.ctl { resize: vertical; min-height: 44px; }
 .tdp-f > .ctl { flex: 1; min-width: 0; }
 .tdp-acts { display: flex; flex-wrap: wrap; gap: var(--g-sp-2); margin-top: var(--g-sp-3); }
 .tdp-acts .btn { flex: 1 1 auto; min-width: 104px; white-space: nowrap; }
-.batch-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(560px, calc(100% - 24px)); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: var(--g-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: var(--g-sp-3) var(--g-sp-3); display: flex; gap: var(--g-sp-2); align-items: center; z-index: var(--g-z-float); }
+.batch-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(66px + var(--sa-bottom)); width: min(560px, calc(100% - 24px)); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: var(--g-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: var(--g-sp-3) var(--g-sp-3); display: flex; gap: var(--g-sp-2); align-items: center; z-index: var(--g-z-float); }
 
 /* ============================================================
    v2.4.0 图表（js/chart.js）：SVG 图表 + 图例 + 构成条
@@ -508,3 +533,47 @@ textarea.ctl { resize: vertical; min-height: 44px; }
 .set-tab { flex: 0 0 auto; white-space: nowrap; padding: var(--g-sp-2) var(--g-sp-3); border-radius: var(--g-r-pill); background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); font-size: var(--g-fs-md); cursor: pointer; }
 .set-tab.on { background: var(--primary); color: #fff; border-color: var(--primary); }
 .set-group > .card { margin-bottom: var(--g-sp-3); }
+
+/* —— 甘特图 / 进度计划横道图（v2.9.0）—— */
+.gantt-scroll svg, .gantt-print svg { display: block; }
+
+/* 打印 / 另存为 PDF：只输出横道图本体，其余界面全部隐藏；纸张方向在打印面板选横向 */
+@media print {
+  #app { overflow: visible !important; }
+  body * { visibility: hidden !important; }
+  .gantt-print, .gantt-print * { visibility: visible !important; }
+  .gantt-print { position: absolute; left: 0; top: 0; width: 100%; overflow: visible !important; }
+  .gantt-print svg { max-width: 100%; height: auto; }
+}
+
+/* —— 可访问性与大屏（P1-10）—— */
+:root { --app-w: 480px; }
+
+/* 折叠屏展开 / 平板：居中加宽，避免两侧大片空白 */
+@media (min-width: 640px) {
+  :root { --app-w: 720px; }
+}
+
+/* 大字号档位（设置 → 外观 → 字号）：只放大文字类 Token */
+:root[data-font="lg"] {
+  --g-fs-xs: 13px; --g-fs-sm: 14px; --g-fs-md: 15px; --g-fs-ctl: 16px; --g-fs-base: 17px;
+  --g-fs-lg: 19px; --g-fs-xl: 21px; --g-fs-2xl: 24px; --g-fs-3xl: 32px; --g-fs-amount: 36px;
+  --g-fs-fab: 28px; --g-fs-4xl: 42px;
+}
+:root[data-font="xl"] {
+  --g-fs-xs: 15px; --g-fs-sm: 16px; --g-fs-md: 17px; --g-fs-ctl: 18px; --g-fs-base: 19px;
+  --g-fs-lg: 21px; --g-fs-xl: 24px; --g-fs-2xl: 27px; --g-fs-3xl: 35px; --g-fs-amount: 40px;
+  --g-fs-fab: 30px; --g-fs-4xl: 46px;
+}
+
+/* —— 施工进度独立页（#/gantt）：铺满宽度 + 隐藏底栏，把纵向空间全留给图 —— */
+body[data-route="gantt"] #app { max-width: 100%; }
+body[data-route="gantt"] #tabbar { display: none; }
+body[data-route="gantt"] #view { padding-bottom: calc(var(--g-sp-4) + var(--sa-bottom)); }
+body[data-route="gantt"] .fab { display: none; }
+
+/* 横屏矮屏（手机横过来）：压缩顶栏与底栏，给内容让高度 */
+@media (orientation: landscape) and (max-height: 520px) {
+  .topbar-inner { height: 44px; }
+  #view { padding-top: var(--g-sp-3); padding-bottom: calc(var(--c-tab-h) + var(--sa-bottom) + var(--g-sp-3)); }
+}

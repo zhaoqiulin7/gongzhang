@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  取色来自 DESIGN_TOKENS.md 语义层（保持单一真源）：
+    主色 墨绿 #1f6f54   暖纸账本底色 #f6f1e6   强调做旧金 #b8862c
+  注意：XML 注释里不能出现连续两个连字符，故此处不写 CSS 变量名写法。
+-->
+<resources>
+    <color name="colorPrimary">#1f6f54</color>
+    <color name="colorPrimaryDark">#17543f</color>
+    <color name="colorAccent">#b8862c</color>
+    <color name="paperBg">#f6f1e6</color>
+
+    <!-- 启动闪屏与状态栏（阶段 C3）：用暖纸底色避免冷启动白闪 -->
+    <color name="splashBackground">#f6f1e6</color>
+    <color name="statusBarColor">#f6f1e6</color>
+</resources>

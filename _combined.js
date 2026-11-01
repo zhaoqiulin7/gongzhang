@@ -1,3 +1,4 @@
+/* ===== demo ===== */
 // 演示数据（v2.6.0 从 db.js 抽离）
 // 首次启动播种一份演示账本（2 项目 + 5 往来 + 8 流水 + 2 提醒 + 基础配置），
 // 用户可随时「还原演示」或「清空为空白账本」（设置 → 数据安全 → 演示数据）。
@@ -471,7 +472,12 @@ function b64ToBlob(b64, fallbackType) {
 const BACKUP_STORES = ['projects', 'transactions', 'parties', 'reminders', 'attachments', 'meta'];
 async function exportAll() {
   await initBackend();
-  const out = { app: 'decor-accounting', schema: 1, exportedAt: new Date().toISOString(), stores: {} };
+  // P1-7：写入 schema 版本，导入时用来判断「备份比当前程序新 / 旧」，避免静默丢字段
+  const out = {
+    app: 'decor-accounting', schema: DB_VERSION, dbVersion: DB_VERSION,
+    appVersion: (typeof window !== 'undefined' && window.__GZ_VERSION) || '',
+    exportedAt: new Date().toISOString(), stores: {}
+  };
   for (const name of BACKUP_STORES) {
     const recs = await getAll(name);
     if (name === 'attachments') {
@@ -498,6 +504,11 @@ async function exportAll() {
  */
 async function importAll(data) {
   if (!data || !data.stores) throw new Error('备份文件格式不正确');
+  // P1-7：版本兼容。备份比当前程序更新 → 可能含本版本读不懂的字段，明确提示而不是静默覆盖
+  const bv = Number(data.schema || data.dbVersion || 1);
+  if (bv > DB_VERSION) {
+    throw new Error('备份来自更高版本（schema ' + bv + ' > 当前 ' + DB_VERSION + '），请先升级 App 再导入');
+  }
   await initBackend();
   for (const name of BACKUP_STORES) {
     if (backend === 'idb') await idbReq(idbTx(name, 'readwrite').clear());
@@ -1040,6 +1051,1290 @@ function chartLegend(items) {
   return d;
 }
 
+/* ===== gantt ===== */
+/**
+ * gantt.js —— 施工阶段甘特图 / 进度计划横道图（v2.9.0 新增）
+ *
+ * 职责（与 app.js 解耦，纯函数 + DOM 生成，不碰 IndexedDB）：
+ *   1. ganttModel(stages)   —— 把项目阶段整理成统一的行模型（排序 / 工期 / 完成状态）
+ *   2. ganttSVG(model, opt) —— 生成 SVG 图（两种形态共用，保证「项目内嵌」与「横道图导出」一致）
+ *        - compact 模式：项目详情页内嵌，窄宽度、横向滚动
+ *        - full    模式：横道图导出页，带左侧信息表（序号/名称/开始/结束/工期）
+ *   3. 导出：SVG 源文件 / PNG（svg→canvas→blob）/ Excel（.xlsx，零依赖手写 zip）
+ *
+ * 约定：
+ *   - 日期一律 'YYYY-MM-DD' 字符串；天数含首尾（工期 = end-start+1）
+ *   - 颜色只引用 Token（var(--chart-n) / --border / --text ...），与全站图表同色（verify 门禁）
+ *   - 不引入任何第三方库；xlsx 为 STORE（不压缩）zip，手写 CRC32
+ */
+
+/* ---------------- 模型 ---------------- */
+
+/** 解析 'YYYY-MM-DD' → 自 1970 起的天数（本地时区，避免 UTC 偏移导致差一天） */
+function gDay(iso) {
+  if (!iso) return NaN;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+  if (!m) return NaN;
+  return Math.round(new Date(+m[1], +m[2] - 1, +m[3]).getTime() / 864e5);
+}
+/** 天数 → 'YYYY-MM-DD' */
+function gIso(n) {
+  const d = new Date(n * 864e5);
+  const p = (x) => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+/**
+ * 阶段数据 → 甘特行模型
+ * 行规则：有 planStart/planEnd 用预计；缺起止时用实际完成日或项目工期兜底，
+ *        保证「只填了名字」的阶段也能出现在图上（排在末尾）。
+ * @param {Array} stages 项目阶段原数组
+ * @param {Object} proj  项目对象（startDate/endDate 作兜底）
+ */
+function ganttModel(stages, proj) {
+  const list = (stages || []).map((s, i) => {
+    let start = gDay(s.planStart);
+    let end = gDay(s.planEnd);
+    const act = gDay(s.date); // 实际完成日
+    if (isNaN(start) && !isNaN(act)) start = act;
+    if (isNaN(end) && !isNaN(act)) end = act;
+    if (isNaN(start) && !isNaN(end)) start = end;
+    if (!isNaN(start) && isNaN(end)) end = start;
+    return {
+      i, id: s.id, name: s.name || ('阶段' + (i + 1)),
+      start, end, act, done: !!s.done,
+      milestone: !!s.milestone,     // 里程碑：只画◆，不占工期
+      pred: s.pred || '',           // 前置阶段 id（可选；不填则不参与依赖图与关键路径）
+      raw: s
+    };
+  });
+  // 无任何日期的行排在最后，其余按开始日升序（同日按原顺序）
+  const hasDate = (r) => !isNaN(r.start);
+  list.sort((a, b) => {
+    if (hasDate(a) !== hasDate(b)) return hasDate(a) ? -1 : 1;
+    if (!hasDate(a)) return a.i - b.i;
+    return (a.start - b.start) || (a.i - b.i);
+  });
+  const dated = list.filter(hasDate);
+  const lo = dated.length ? Math.min.apply(null, dated.map((r) => r.start)) : (gDay(proj && proj.startDate) || gDay(today()));
+  const hi = dated.length ? Math.max.apply(null, dated.map((r) => r.end)) : lo;
+  const byId = {};
+  list.forEach((r) => { byId[r.id] = r; });
+  // 关键路径：依赖图上「累计工期最长」的那条链路（无显式前置时为空集）
+  const crit = ganttCriticalPath(list, byId);
+  return {
+    rows: list,
+    day0: lo,                       // 时间轴起点（天）
+    dayN: Math.max(hi, lo),         // 时间轴终点
+    totalDays: Math.max(hi, lo) - lo + 1,
+    doneN: list.filter((r) => r.done).length,
+    critical: crit.ids,             // Set<id> 关键路径上的阶段
+    criticalDays: crit.days,        // 关键链路累计天数
+    byId: byId
+  };
+}
+
+/**
+ * 关键路径（CPM 简化版）：在「前置 → 后继」有向图上找累计工期最长的链路。
+ * 只在用户显式设置了前置阶段时才有意义；没设时返回空集，由 UI 提示先设置前置。
+ */
+function ganttCriticalPath(rows, byId) {
+  const ids = new Set(), memo = {};
+  let bestLen = 0, bestTail = null;
+  const lenOf = (r, seen) => {
+    if (memo[r.id] != null) return memo[r.id];
+    if (seen[r.id]) return { d: 0, tail: null };      // 环保护
+    seen[r.id] = 1;
+    const p = r.pred && byId[r.pred];
+    const up = p ? lenOf(p, seen) : { d: 0, tail: null };
+    const own = (isNaN(r.start) || isNaN(r.end)) ? 0 : (r.end - r.start + 1);
+    const res = { d: up.d + own, tail: up.tail ? up.tail : (p ? p.id : null) };
+    memo[r.id] = res;
+    return res;
+  };
+  rows.forEach((r) => {
+    const L = lenOf(r, {});
+    if (L.d > bestLen) { bestLen = L.d; bestTail = r.id; }
+  });
+  if (!bestTail) return { ids: ids, days: 0 };
+  // 回溯最长链路上的全部节点
+  let cur = bestTail, guard = 0;
+  while (cur && guard++ < 500) {
+    ids.add(cur);
+    cur = byId[cur] ? byId[cur].pred : null;
+    if (!byId[cur]) break;
+  }
+  return { ids: ids, days: bestLen };
+}
+
+/** 行在图上的展示日期（无日期行显示 '—'） */
+function gRowDates(r) {
+  return {
+    s: isNaN(r.start) ? '' : gIso(r.start),
+    e: isNaN(r.end) ? '' : gIso(r.end),
+    days: (isNaN(r.start) || isNaN(r.end)) ? 0 : (r.end - r.start + 1)
+  };
+}
+
+/* ---------------- SVG 生成 ---------------- */
+
+/** 刻度稀疏化：按时间轴宽度决定每几天一个刻度（甘特图/横道图共用，页面信息与图内保持一致） */
+function ganttTickStep(model, timelineWidth) {
+  const dayW = timelineWidth / Math.max(1, model.dayN - model.day0 + 1);
+  return dayW < 3 ? 14 : dayW < 6 ? 7 : dayW < 14 ? 2 : 1;
+}
+
+/**
+ * 生成甘特/横道图 SVG 节点
+ * @param {Object} model ganttModel 结果
+ * @param {Object} opt   {title, withTable, width, rowH, projectLabel}
+ */
+function ganttSVG(model, opt) {
+  opt = opt || {};
+  const withTable = !!opt.withTable;
+  const rowH = opt.rowH || (withTable ? 34 : 28);
+  const headH = 46;                       // 月份带 + 刻度带
+  const rows = model.rows;
+  const n = rows.length;
+  const bodyH = Math.max(1, n) * rowH + 8;
+  const footH = 30;
+
+  // —— 左表宽度（full 模式）——
+  const COLS = withTable
+    ? [{ w: 34, k: 'idx' }, { w: 150, k: 'name' }, { w: 84, k: 'start' }, { w: 84, k: 'end' }, { w: 52, k: 'days' }]
+    : [{ w: 104, k: 'name' }];
+  const leftW = COLS.reduce((a, c) => a + c.w, 0);
+
+  // —— 时间轴刻度：dayWidth 由总天数决定，太密就按周/双周取刻度 ——
+  const span = Math.max(1, model.dayN - model.day0 + 1);
+  const targetTL = opt.timelineWidth || (withTable ? 720 : 520);
+  const dayW = targetTL / span;
+  const step = ganttTickStep(model, targetTL);          // 每 step 天一个刻度（稀疏化，与外部展示共用）
+  const tlW = Math.round(span * dayW);
+  const W = leftW + tlW + 16;
+  const H = headH + bodyH + footH + (opt.title ? 34 : 6);
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('xmlns', NS);
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.setAttribute('font-family', 'system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif');
+
+  const el = (tag, attrs, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    svg.appendChild(e);
+    return e;
+  };
+
+  // —— 配色：全部读 Token，深浅主题自动适配 ——
+  const cs = getComputedStyle(document.documentElement);
+  const V = (k, d) => (cs.getPropertyValue(k) || '').trim() || d;
+  const C = {
+    bg: V('--surface', '#fff'), grid: V('--border', '#e3e7e3'), gridSoft: V('--border', '#e3e7e3'),
+    text: V('--text', '#1d2420'), dim: V('--text-dim', '#66756b'),
+    head: V('--surface-2', '#f2f4f2'), today: V('--danger', '#cc4b37'),
+    pal: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => V('--chart-' + i, '#8a8a8a'))
+  };
+  const left = withTable ? 0 : 0;
+  const TLX = leftW, TLY = opt.title ? 34 : 6;
+
+  // 背景
+  el('rect', { x: 0, y: 0, width: W, height: H, fill: C.bg });
+  if (opt.title) {
+    el('text', { x: 8, y: 22, 'font-size': 15, 'font-weight': 700, fill: C.text }, opt.title);
+  }
+
+  // —— 月份带 ——
+  const months = [];
+  let cur = null;
+  for (let d = model.day0; d <= model.dayN; d++) {
+    const dt = new Date(d * 864e5);
+    const key = dt.getFullYear() + '-' + (dt.getMonth() + 1);
+    if (!cur || cur.key !== key) { cur = { key, y: dt.getFullYear(), m: dt.getMonth() + 1, from: d }; months.push(cur); }
+    cur.to = d;
+  }
+  months.forEach((mo) => {
+    const x = TLX + (mo.from - model.day0) * dayW;
+    const w = (mo.to - mo.from + 1) * dayW;
+    el('rect', { x, y: TLY, width: w, height: 24, fill: C.head, stroke: C.grid, 'stroke-width': .5 });
+    if (w > 34) el('text', { x: x + w / 2, y: TLY + 16, 'font-size': 11, 'text-anchor': 'middle', fill: C.text }, mo.y + '年' + mo.m + '月');
+  });
+
+  // —— 刻度带（按 step 天）——
+  el('rect', { x: TLX, y: TLY + 24, width: tlW, height: 22, fill: C.bg, stroke: C.grid, 'stroke-width': .5 });
+  for (let d = model.day0; d <= model.dayN; d += step) {
+    const x = TLX + (d - model.day0) * dayW;
+    el('line', { x1: x, y1: TLY, x2: x, y2: TLY + headH - 1, stroke: C.grid, 'stroke-width': .5 });
+    const dt = new Date(d * 864e5);
+    const lbl = (dt.getMonth() + 1) + '/' + dt.getDate();
+    el('text', { x: x + 2, y: TLY + 38, 'font-size': 9, fill: C.dim }, lbl);
+  }
+
+  // —— 左表表头 ——
+  if (withTable) {
+    const hs = ['序号', '工作名称', '开始', '结束', '工期(天)'];
+    let hx = 0;
+    COLS.forEach((c, ci) => {
+      el('rect', { x: hx, y: TLY, width: c.w, height: headH - 1, fill: C.head, stroke: C.grid, 'stroke-width': .5 });
+      el('text', { x: hx + c.w / 2, y: TLY + 28, 'font-size': 11, 'font-weight': 600, 'text-anchor': 'middle', fill: C.text }, hs[ci]);
+      hx += c.w;
+    });
+  } else {
+    el('rect', { x: 0, y: TLY, width: leftW, height: headH - 1, fill: C.head, stroke: C.grid, 'stroke-width': .5 });
+    el('text', { x: 8, y: TLY + 28, 'font-size': 11, 'font-weight': 600, fill: C.text }, '阶段');
+  }
+
+  // —— 行 + 横道 ——
+  const bodyY = TLY + headH;
+  const bars = [];                 // 拖拽改期用：{rect, row, idx}
+  const geom = {};                 // id → {x, x2, yc} 依赖连线用
+  const critIds = model.critical || new Set();
+  rows.forEach((r, idx) => {
+    const y = bodyY + idx * rowH;
+    // 斑马纹
+    if (idx % 2 === 1) el('rect', { x: 0, y, width: W, height: rowH, fill: C.gridSoft, opacity: .18 });
+    el('line', { x1: 0, y1: y + rowH, x2: W, y2: y + rowH, stroke: C.grid, 'stroke-width': .5 });
+
+    // 左表内容
+    const dts = gRowDates(r);
+    if (withTable) {
+      let hx = 0;
+      const cells = [
+        { t: String(idx + 1), a: 'middle' },
+        { t: (r.done ? '✓ ' : '') + r.name, a: 'start' },
+        { t: dts.s || '—', a: 'middle' },
+        { t: dts.e || '—', a: 'middle' },
+        { t: dts.days ? String(dts.days) : '—', a: 'middle' }
+      ];
+      COLS.forEach((c, ci) => {
+        const cx = c.a === 'middle' ? hx + c.w / 2 : hx + 6;
+        el('text', {
+          x: cx, y: y + rowH / 2 + 4, 'font-size': 11,
+          'text-anchor': c.a || 'start', fill: ci === 1 ? C.text : C.dim,
+          'font-weight': ci === 1 ? 600 : 400
+        }, cells[ci].t);
+        hx += c.w;
+      });
+      el('line', { x1: 0, y1: y, x2: leftW, y2: y, stroke: C.grid, 'stroke-width': .5 });
+    } else {
+      el('text', { x: 8, y: y + rowH / 2 + 4, 'font-size': 11, 'font-weight': 600, fill: C.text },
+        truncStr((r.done ? '✓ ' : '') + r.name, 7));
+    }
+
+    // 网格（右时间区）
+    for (let d = model.day0; d <= model.dayN; d += step) {
+      const x = TLX + (d - model.day0) * dayW;
+      el('line', { x1: x, y1: bodyY, x2: x, y2: bodyY + bodyH, stroke: C.gridSoft, 'stroke-width': .4 });
+    }
+
+    // 横道 / 里程碑
+    if (!isNaN(r.start)) {
+      const bx = TLX + (r.start - model.day0) * dayW;
+      const bw = Math.max(3, (r.end - r.start + 1) * dayW - 2);
+      const by = y + (rowH - 14) / 2;
+      const yc = y + rowH / 2;
+      const color = C.pal[idx % C.pal.length];
+      const isCrit = critIds.has(r.id);
+      const critAttr = isCrit ? { stroke: C.today, 'stroke-width': 1.6 } : {};
+      geom[r.id] = { x: bx, x2: bx + bw, yc: yc };
+
+      if (r.milestone) {
+        // 里程碑：◆ 标记，不占工期（只记一个点）
+        const s2 = Math.min(11, Math.max(8, rowH / 3));
+        const pts = [bx + ',' + (yc - s2), (bx + s2) + ',' + yc, bx + ',' + (yc + s2), (bx - s2) + ',' + yc].join(' ');
+        el('polygon', Object.assign({ points: pts, fill: isCrit ? C.today : color }, critAttr));
+        if (rowH >= 26) el('text', { x: bx + s2 + 5, y: yc + 4, 'font-size': 9, fill: C.dim }, '★');
+      } else {
+        const rect = el('rect', Object.assign({
+          x: bx, y: by, width: bw, height: 14, rx: 4, fill: color, opacity: r.done ? .45 : .92
+        }, critAttr));
+        // 实际完成：深色覆盖到实际完成日
+        if (!isNaN(r.act) && r.act >= r.start) {
+          const aw = Math.min(bw, (r.act - r.start + 1) * dayW - 2);
+          el('rect', { x: bx, y: by, width: Math.max(3, aw), height: 14, rx: 4, fill: color });
+        }
+        if (bw > 30) {
+          el('text', { x: bx + bw / 2, y: by + 11, 'font-size': 9, 'text-anchor': 'middle', fill: '#fff', 'font-weight': 700 }, dts.days + '天');
+        }
+        if (opt.drag) { rect.style.touchAction = 'none'; rect.style.cursor = 'ew-resize'; }
+        bars.push({ rect: rect, row: r, idx: idx });
+      }
+    }
+  });
+
+  // —— 依赖连线（前置 → 后继）——
+  if (opt.deps) {
+    rows.forEach((r) => {
+      const p = r.pred && model.byId && model.byId[r.pred];
+      if (!p || !geom[p.id] || !geom[r.id]) return;
+      const a = geom[p.id], b = geom[r.id];
+      const x1 = a.x2, y1 = a.yc, x2 = b.x, y2 = b.yc;
+      const mx = Math.max(x1 + 6, x2 - 8);
+      const isCrit = critIds.has(r.id) && critIds.has(p.id);
+      const st = isCrit ? C.today : C.dim;
+      el('path', { d: 'M' + x1 + ' ' + y1 + ' H' + mx + ' V' + y2 + ' H' + x2, fill: 'none', stroke: st, 'stroke-width': 1 });
+      el('polygon', { points: (x2 - 5) + ',' + (y2 - 3.5) + ' ' + x2 + ',' + y2 + ' ' + (x2 - 5) + ',' + (y2 + 3.5), fill: st });
+    });
+  }
+
+  // —— 拖拽改期（P2-11）：需显式开启，避免与横向滚动手势冲突 ——
+  if (opt.drag && typeof opt.onChange === 'function') {
+    ganttAttachDrag(svg, { bars: bars, dayW: dayW, day0: model.day0, tlx: TLX, onChange: opt.onChange });
+  }
+
+  // —— 今日虚线 ——
+  const td = gDay(today());
+  if (!isNaN(td) && td >= model.day0 && td <= model.dayN) {
+    const x = TLX + (td - model.day0) * dayW;
+    el('line', { x1: x, y1: TLY, x2: x, y2: bodyY + bodyH, stroke: C.today, 'stroke-width': 1, 'stroke-dasharray': '4 3' });
+  }
+
+  // —— 外框 + 脚注 ——
+  el('rect', { x: .5, y: TLY + .5, width: W - 1, height: headH + bodyH - 1, fill: 'none', stroke: C.grid, 'stroke-width': 1 });
+  el('text', { x: 8, y: H - 10, 'font-size': 10, fill: C.dim },
+    '总工期 ' + model.totalDays + ' 日历天（' + gIso(model.day0) + ' 至 ' + gIso(model.dayN) + '）　'
+    + '完成 ' + model.doneN + '/' + n + '　虚线: 今日 ' + today());
+
+  return svg;
+}
+
+/** 甘特 SVG → 独立 SVG 字符串（导出 .svg 用） */
+function ganttSVGText(svg) {
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(svg);
+}
+
+/** SVG → PNG Blob（2x 高清）。@returns {Promise<Blob>} */
+function ganttSVGPng(svg, scale) {
+  scale = scale || 2;
+  return new Promise((resolve, reject) => {
+    const txt = ganttSVGText(svg);
+    const url = URL.createObjectURL(new Blob([txt], { type: 'image/svg+xml;charset=utf-8' }));
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(svg.clientWidth * scale) || svg.width.baseVal.value * scale;
+        cv.height = Math.round(svg.clientHeight * scale) || svg.height.baseVal.value * scale;
+        const ctx = cv.getContext('2d');
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        cv.toBlob((b) => b ? resolve(b) : reject(new Error('toBlob 失败')), 'image/png');
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG 解码失败')); };
+    img.src = url;
+  });
+}
+
+/* ---------------- 交互：拖拽改期（P2-11） ---------------- */
+
+/**
+ * 给横道挂上拖拽改期。需由页面显式开启（opt.drag），否则会与横向滚动手势冲突。
+ * 规则：拖中段 = 整体平移；拖左右端 8px 内 = 只改开始 / 只改结束；最少 1 天。
+ * @param {Object} o {bars, dayW, day0, onChange(idx, newStartDay, newEndDay)}
+ */
+function ganttAttachDrag(svg, o) {
+  let act = null;
+  const ptX = (e) => {
+    const r = svg.getBoundingClientRect();
+    const sx = svg.width.baseVal.value / (r.width || svg.width.baseVal.value);
+    return (e.clientX - r.left) * sx;
+  };
+  const onDown = (e) => {
+    const t = e.target;
+    const hit = o.bars.filter((b) => b.rect === t)[0];
+    if (!hit) return;
+    const x = ptX(e);
+    const bx = +hit.rect.getAttribute('x'), bw = +hit.rect.getAttribute('width');
+    const mode = (x - bx < 8) ? 'start' : ((bx + bw - x) < 8 ? 'end' : 'move');
+    act = { hit: hit, mode: mode, x0: x, s0: hit.row.start, e0: hit.row.end };
+    t.setAttribute('opacity', '1');
+    e.preventDefault();
+  };
+  const onMove = (e) => {
+    if (!act) return;
+    const dd = Math.round((ptX(e) - act.x0) / o.dayW);
+    let ns = act.s0, ne = act.e0;
+    if (act.mode === 'move') { ns = act.s0 + dd; ne = act.e0 + dd; }
+    else if (act.mode === 'start') { ns = Math.min(act.s0 + dd, act.e0); ne = act.e0; }
+    else { ns = act.s0; ne = Math.max(act.e0 + dd, act.s0); }
+    const x = o.tlx + (ns - o.day0) * o.dayW;
+    const w = (ne - ns + 1) * o.dayW - 2;
+    act.hit.rect.setAttribute('x', x);
+    act.hit.rect.setAttribute('width', Math.max(3, w));
+    act.cur = { s: ns, e: ne };
+    e.preventDefault();
+  };
+  const onUp = () => {
+    if (!act) return;
+    const a = act; act = null;
+    if (a.cur && (a.cur.s !== a.s0 || a.cur.e !== a.e0)) o.onChange(a.hit.idx, a.cur.s, a.cur.e);
+  };
+  svg.addEventListener('pointerdown', onDown);
+  svg.addEventListener('pointermove', onMove);
+  svg.addEventListener('pointerup', onUp);
+  svg.addEventListener('pointercancel', onUp);
+  svg.addEventListener('pointerleave', onUp);
+}
+
+/* ---------------- 导出：PDF（PNG→JPEG→PDF，P2-12 兜底） ---------------- */
+
+/**
+ * 极简 PDF：把一张 JPEG 铺满一页（页面尺寸随图）。
+ * 用途：部分国产 ROM 的 WebView 不响应 window.print()，用它兜底产出真正的 .pdf。
+ * @param {Uint8Array} jpeg JPEG 原始字节
+ * @param {number} w 像素宽 @param {number} h 像素高
+ */
+function buildPdfFromJpeg(jpeg, w, h) {
+  const K = 0.75;                               // 96dpi px → pt
+  const PW = Math.round(w * K), PH = Math.round(h * K);
+  const enc = (s) => { const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i) & 0xFF; return a; };
+  const objs = [];
+  const add = (body) => { objs.push(body); return objs.length; };   // 1-based
+
+  const nImg = add('');                          // 先占位，后面按顺序填充
+  const nCont = add('');
+  const nPage = add('');
+  const nPages = add('');
+  const nCat = add('');
+
+  const content = 'q ' + PW + ' 0 0 ' + PH + ' 0 0 cm /Im0 Do Q';
+  objs[nCont - 1] = '<< /Length ' + content.length + ' >>\nstream\n' + content + '\nendstream';
+  objs[nImg - 1] = '<< /Type /XObject /Subtype /Image /Width ' + w + ' /Height ' + h
+    + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + jpeg.length + ' >>\nstream\n';
+  objs[nPage - 1] = '<< /Type /Page /Parent ' + nPages + ' 0 R /MediaBox [0 0 ' + PW + ' ' + PH + ']'
+    + ' /Resources << /XObject << /Im0 ' + nImg + ' 0 R >> >> /Contents ' + nCont + ' 0 R >>';
+  objs[nPages - 1] = '<< /Type /Pages /Kids [' + nPage + ' 0 R] /Count 1 >>';
+  objs[nCat - 1] = '<< /Type /Catalog /Pages ' + nPages + ' 0 R >>';
+
+  const chunks = [], offsets = [];
+  let pos = 0;
+  const push = (u) => { chunks.push(u); pos += u.length; };
+  push(enc('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'));
+  for (let i = 0; i < objs.length; i++) {
+    offsets.push(pos);
+    push(enc((i + 1) + ' 0 obj\n' + objs[i] + '\nendobj\n'));
+    if (i === nImg - 1) { push(jpeg); push(enc('\nendstream')); }
+  }
+  const xrefPos = pos;
+  let xref = 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n';
+  offsets.forEach((o) => { xref += String(o).padStart(10, '0') + ' 00000 n \n'; });
+  push(enc(xref + 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root ' + nCat + ' 0 R >>\nstartxref\n' + xrefPos + '\n%%EOF\n'));
+  return new Blob(chunks, { type: 'application/pdf' });
+}
+
+/** 甘特图 → PDF Blob（内部先转 JPEG 再包进 PDF） */
+async function ganttPdf(svg, scale) {
+  const png = await ganttSVGPng(svg, scale || 2);
+  const bmp = await createImageBitmap(png);
+  const cv = document.createElement('canvas');
+  cv.width = bmp.width; cv.height = bmp.height;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(bmp, 0, 0);
+  const dataUrl = cv.toDataURL('image/jpeg', 0.92);
+  const bin = atob(dataUrl.split(',')[1]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  if (bmp.close) bmp.close();
+  return buildPdfFromJpeg(bytes, cv.width, cv.height);
+}
+
+/* ---------------- 导出：xlsx（零依赖） ---------------- */
+
+/** CRC32（xlsx zip 需要） */
+const _CRC_T = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function _crc32(buf) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = _CRC_T[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/** 手写 STORE zip：entries = [{name, data(Uint8Array)}] → Blob */
+function _zipStore(entries) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  const dosTime = 0, dosDate = ((new Date().getFullYear() - 1980) << 9) | (1 << 5) | 1;
+  entries.forEach((e) => {
+    const nameB = enc.encode(e.name);
+    const crc = _crc32(e.data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true);
+    lh.setUint16(6, 0x0800, true);            // UTF-8 文件名
+    lh.setUint16(8, 0, true);                 // STORE 不压缩
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true);
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, e.data.length, true); lh.setUint32(22, e.data.length, true);
+    lh.setUint16(26, nameB.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), nameB, e.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true);
+    ch.setUint32(20, e.data.length, true); ch.setUint32(24, e.data.length, true);
+    ch.setUint16(28, nameB.length, true);
+    ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), nameB);
+    offset += 30 + nameB.length + e.data.length;
+  });
+  let cdSize = 0;
+  central.forEach((u) => { cdSize += u.length; });
+  const eo = new DataView(new ArrayBuffer(22));
+  eo.setUint32(0, 0x06054b50, true);
+  eo.setUint16(8, entries.length, true); eo.setUint16(10, entries.length, true);
+  eo.setUint32(12, cdSize, true); eo.setUint32(16, offset, true);
+  return new Blob([].concat.apply([], parts.concat(central, [new Uint8Array(eo.buffer)])), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+const _xesc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+/**
+ * 生成 .xlsx（单表，首行大标题 + 表头 + 数据列）
+ * @param {Object} o {sheet, title, head:[...], rows:[[...]], widths:[...]}
+ * @returns {Blob}
+ */
+function buildXlsx(o) {
+  const xw = (v) => {
+    if (v == null || v === '') return '<c/>';
+    if (typeof v === 'number' && isFinite(v)) return '<c><v>' + v + '</v></c>';
+    return '<c t="inlineStr"><is><t xml:space="preserve">' + _xesc(v) + '</t></is></c>';
+  };
+  const colRef = (i) => { let s = '', n = i + 1; while (n > 0) { s = String.fromCharCode(65 + (n - 1) % 26) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const rowXml = (cells) => '<row>' + cells.map(xw).join('') + '</row>';
+
+  // 首行大标题：整表合并居中（mergeCell），避免列错位
+  const lastCol = colRef(o.head.length - 1);
+  const rowsXml = [];
+  rowsXml.push('<row ht="26">' + o.title.map((t) =>
+    '<c s="2" t="inlineStr"><is><t xml:space="preserve">' + _xesc(t) + '</t></is></c>').join('') + '</row>');
+  rowsXml.push('<row/>');
+  rowsXml.push('<row>' + o.head.map((t) => '<c s="1" t="inlineStr"><is><t>' + _xesc(t) + '</t></is></c>').join('') + '</row>');
+  o.rows.forEach((r) => rowsXml.push(rowXml(r)));
+  const colsXml = (o.widths || []).map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('');
+
+  const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + '<dimension ref="A1"/>'
+    + '<sheetViews><sheetView workbookViewId="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+    + '<sheetFormatPr defaultRowHeight="18"/>'
+    + '<cols>' + colsXml + '</cols>'
+    + '<sheetData>' + rowsXml.join('') + '</sheetData>'
+    + '<mergeCells count="1"><mergeCell ref="A1:' + lastCol + '1"/></mergeCells></worksheet>';
+
+  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + '<fonts count="4"><font><sz val="11"/><name val="Calibri"/></font>'
+    + '<font><b/><sz val="11"/><name val="Calibri"/></font>'
+    + '<font><b/><sz val="15"/><name val="Calibri"/></font>'
+    + '<font><sz val="11"/><name val="Calibri"/></font></fonts>'
+    + '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+    + '<fill><patternFill patternType="solid"><fgColor rgb="FFD9E2DC"/><bgColor indexed="64"/></patternFill></fill></fills>'
+    + '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+    + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    + '<cellXfs count="3">'
+    + '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+    + '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
+    + '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+    + '</cellXfs></styleSheet>';
+
+  const enc = new TextEncoder();
+  const files = {
+    '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      + '<Default Extension="xml" ContentType="application/xml"/>'
+      + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+      + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+      + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
+    '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    'xl/workbook.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+      + '<sheets><sheet name="' + _xesc(o.sheet || 'Sheet1') + '" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+      + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
+    'xl/styles.xml': styles,
+    'xl/worksheets/sheet1.xml': sheet
+  };
+  return _zipStore(Object.keys(files).map((k) => ({ name: k, data: enc.encode(files[k]) })));
+}
+
+/** 统一的「保存或分享文件」出口：原生走分享面板，Web 走下载 */
+async function ganttSaveBlob(blob, name, title) {
+  const ok = await Bridge.share.file({ blob: blob, file: new File([blob], name, { type: blob.type }), name: name, title: title || name });
+  if (ok) { toast('已生成 ' + name); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('已下载 ' + name);
+}
+
+/* ===== bridge ===== */
+/* =============================================================================
+ * js/bridge.js —— 能力抽象层（安卓化阶段 B）
+ *
+ * 目的：把「浏览器 API」与「原生插件」收敛到一个出口，业务层（app.js）只认 Bridge.*，
+ *       不再直接碰 Notification / navigator.share / input[type=file] / navigator.clipboard。
+ *
+ * 两条实现分支：
+ *   Native 分支 —— Capacitor 插件（工账 APK 内生效）
+ *   Web    分支 —— 浏览器 API（PWA / 预览环境生效，行为与改造前完全一致）
+ *
+ * 为什么要自己 registerPlugin 而不是 import 插件的 npm 包？
+ *   本项目 www/ 是「多个普通 <script> 顺序加载」的形态（见 build.js 的 ORDER 约定），
+ *   没有打包器，无法解析 import '@capacitor/local-notifications' 这类裸模块名。
+ *   Capacitor 的桥协议本质只是 {pluginId, methodName, options} 的字符串派发，
+ *   因此用全局 Capacitor.registerPlugin(插件名) 自注册即可，插件的原生实现由
+ *   package.json 依赖 + cap sync 打进 APK，JS 侧只是个代理。
+ *
+ * 加载位置：util.js 之后、app.js 之前（bridge 用到 toast/openModal，app 用到 Bridge）。
+ * ============================================================================= */
+
+/* ---------------- 1. 环境探测与插件获取 ---------------- */
+
+/** Capacitor 全局对象（由原生运行时注入 WebView；纯浏览器下为 undefined） */
+function capGlobal() {
+  return (typeof window !== 'undefined' && window.Capacitor) ? window.Capacitor : null;
+}
+
+/** 是否运行在原生壳（APK）内 */
+function isNative() {
+  const c = capGlobal();
+  return !!(c && typeof c.isNativePlatform === 'function' && c.isNativePlatform());
+}
+
+/** 当前平台标识：'android' | 'ios' | 'web' */
+function platformOf() {
+  const c = capGlobal();
+  if (c && typeof c.getPlatform === 'function') return c.getPlatform();
+  return 'web';
+}
+
+const _pluginCache = {};
+
+/**
+ * 惰性注册并返回插件代理；不可用时返回 null。
+ * 只在 isNative() 为真时调用其方法——Web 下插件代理会抛 "not implemented"。
+ */
+function plugin(name) {
+  const c = capGlobal();
+  if (!c || typeof c.registerPlugin !== 'function') return null;
+  if (!(name in _pluginCache)) {
+    try {
+      _pluginCache[name] = c.registerPlugin(name) || null;
+    } catch (e) {
+      _pluginCache[name] = null;
+    }
+  }
+  return _pluginCache[name];
+}
+
+/** 只在原生环境返回插件；Web 下一律 null，交给 Web 分支 */
+function nativePlugin(name) {
+  return isNative() ? plugin(name) : null;
+}
+
+/**
+ * Android 的本地通知 id 必须是正整数（32 位）。
+ * 用 FNV-1a 把字符串 tag 稳定映射成数字，保证「同一 tag 复用同一条通知」（可覆盖、可取消）。
+ */
+/** Android 通知渠道 id（全局唯一，改了会新建渠道，慎改） */
+const NOTIFY_CHANNEL = 'gongzhang-remind';
+
+function tagToId(tag) {
+  let h = 0x811c9dc5;
+  const s = String(tag || 'gongzhang');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  const id = h % 2147483647;
+  return id === 0 ? 1 : id;
+}
+
+/* ---------------- 2. 通用文件选择（Web 分支，WebView 内同样有效） ---------------- */
+
+/**
+ * 弹出系统文件选择器并读取；用户取消时 resolve(null)。
+ * WebView 内 <input type=file> 会唤起 Android 系统文件选择器，因此导入功能无需原生插件。
+ */
+function pickFileWeb(accept, capture) {
+  return new Promise((resolve) => {
+    try {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      if (accept) inp.accept = accept;
+      if (capture) inp.setAttribute('capture', 'environment');
+      inp.style.display = 'none';
+      let settled = false;
+      const done = (f) => { if (!settled) { settled = true; resolve(f || null); } };
+      inp.addEventListener('change', () => { done(inp.files && inp.files[0]); });
+      // WebView 里 visibilitychange 不可靠，用超时兜底（用户取消时不会触发 change）
+      document.body.appendChild(inp);
+      inp.click();
+      setTimeout(() => { if (inp.parentNode) inp.parentNode.removeChild(inp); done(null); }, 120000);
+    } catch (e) { resolve(null); }
+  });
+}
+
+/** Blob/File → base64（原生写文件、分享文件时需要） */
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    try {
+      const r = new FileReader();
+      r.onload = () => {
+        const s = String(r.result || '');
+        const i = s.indexOf(',');
+        resolve(i >= 0 ? s.slice(i + 1) : s);
+      };
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    } catch (e) { reject(e); }
+  });
+}
+
+/* ---------------- 3. Bridge 主体 ---------------- */
+
+const Bridge = {
+  isNative: isNative,
+  platform: platformOf,
+  tagToId: tagToId,
+
+  /* ---------------- 3.1 系统通知 ---------------- */
+  notify: {
+    /** 'granted' | 'denied' | 'default' | 'unsupported' */
+    async permission() {
+      const p = nativePlugin('LocalNotifications');
+      if (p && p.checkPermissions) {
+        try {
+          const r = await p.checkPermissions();
+          return r.display || 'default';
+        } catch (e) { return 'unsupported'; }
+      }
+      if (typeof Notification === 'undefined') return 'unsupported';
+      return Notification.permission;
+    },
+
+    /** 申请权限，返回最新权限状态 */
+    async request() {
+      const p = nativePlugin('LocalNotifications');
+      if (p && p.requestPermissions) {
+        try {
+          const r = await p.requestPermissions();
+          return r.display || 'denied';
+        } catch (e) { return 'denied'; }
+      }
+      if (typeof Notification === 'undefined' || !Notification.requestPermission) return 'unsupported';
+      try { return await Notification.requestPermission(); } catch (e) { return 'denied'; }
+    },
+
+    /**
+     * Android 8+ 通知渠道（P1-6）：不建渠道时，部分国产 ROM 会静默丢弃通知，
+     * 用户也无从单独开关「提醒」这一类。首次排程前调一次即可，重复创建是幂等的。
+     */
+    async ensureChannel() {
+      const p = nativePlugin('LocalNotifications');
+      if (!p || !p.createChannel) return false;
+      try {
+        await p.createChannel({
+          id: NOTIFY_CHANNEL, name: '到期提醒',
+          description: '收付款节点与施工阶段到期提醒',
+          importance: 4,          // IMPORTANCE_HIGH：会响铃 + 弹出
+          visibility: 1,          // 锁屏可见（不暴露金额正文由 body 决定）
+          sound: 'default', vibration: true, lights: true
+        });
+        return true;
+      } catch (e) { return false; }
+    },
+
+    /** 立即弹一条通知。o = {title, body, tag, pid} */
+    async show(o) {
+      const p = nativePlugin('LocalNotifications');
+      if (p && p.schedule) {
+        try {
+          await Bridge.notify.ensureChannel();
+          const at = new Date(Date.now() + 1500); // 1.5s 后触发，给 UI 让出线程
+          await p.schedule({
+            notifications: [{
+              title: o.title, body: o.body || '', id: tagToId(o.tag), channelId: NOTIFY_CHANNEL,
+              extra: { pid: o.pid || '' }, schedule: { at: at }
+            }]
+          });
+          return true;
+        } catch (e) { return false; }
+      }
+      return Bridge.notify._web(o);
+    },
+
+    /** 排程一批通知。list = [{tag, title, body, at(Date), pid}] */
+    async schedule(list) {
+      const p = nativePlugin('LocalNotifications');
+      if (!p || !p.schedule) return 0;
+      if (!list.length) return 0;
+      try {
+        await Bridge.notify.ensureChannel();
+        await p.schedule({
+          notifications: list.map((n) => ({
+            title: n.title, body: n.body || '', id: tagToId(n.tag), channelId: NOTIFY_CHANNEL,
+            extra: { pid: n.pid || '' }, schedule: { at: n.at }
+          }))
+        });
+        return list.length;
+      } catch (e) { return 0; }
+    },
+
+    /** 取消一批通知（传数字 id 数组） */
+    async cancel(ids) {
+      const p = nativePlugin('LocalNotifications');
+      if (!p || !p.cancel || !ids || !ids.length) return 0;
+      try {
+        await p.cancel({ notifications: ids.map((i) => ({ id: i })) });
+        return ids.length;
+      } catch (e) { return 0; }
+    },
+
+    /**
+     * 【核心改造】收付款节点通知改「预排程」：节点一改动就把未来的通知排好，
+     * App 没打开也会到点弹。Web 分支无此能力（保持原轮询逻辑），返回 -1 表示不支持。
+     *
+     * @param {Array} reminders 全部收付款节点
+     * @param {Array} projects 项目列表（用于拼通知正文）
+     * @param {number} remindDays 提前提醒天数
+     * @returns {number} 排程条数；-1 = 非原生环境
+     */
+    async syncReminders(reminders, projects, remindDays) {
+      if (!isNative()) return -1;
+      const p = nativePlugin('LocalNotifications');
+      if (!p || !p.schedule) return -1;
+
+      const list = [];
+      const ids = [];
+      (reminders || []).forEach((r) => {
+        if (r.done || !r.dueDate) return;
+        const pj = (projects || []).filter((x) => x.id === r.projectId)[0];
+        const pname = pj ? pj.name : '未关联项目';
+        const kind = r.kind === 'receive' ? '收款' : '付款';
+        const amt = r.amount ? ' · ' + fmtMoney(Number(r.amount) || 0) : '';
+        // ① 到期当天 09:00
+        const dueTag = 'rem-' + r.id;
+        const dueAt = new Date(r.dueDate + 'T09:00:00');
+        if (dueAt.getTime() > Date.now()) {
+          list.push({
+            tag: dueTag, at: dueAt, pid: r.projectId,
+            title: (r.kind === 'receive' ? '💰 收款到期' : '💸 付款到期'),
+            body: pname + ' · ' + (r.title || kind) + amt
+          });
+          ids.push(tagToId(dueTag));
+        }
+        // ② 提前 N 天 09:00（remindDays>0 时才排）
+        const lead = Number(remindDays) || 0;
+        if (lead > 0) {
+          const leadDate = new Date(r.dueDate + 'T09:00:00');
+          leadDate.setDate(leadDate.getDate() - lead);
+          if (leadDate.getTime() > Date.now()) {
+            const leadTag = 'remlead-' + r.id;
+            list.push({
+              tag: leadTag, at: leadDate, pid: r.projectId,
+              title: (r.kind === 'receive' ? '🔔 收款提醒' : '🔔 付款提醒'),
+              body: pname + ' · ' + (r.title || kind) + ' · ' + lead + ' 天后到期' + amt
+            });
+            ids.push(tagToId(leadTag));
+          }
+        }
+      });
+
+      // 取消「上次排过、这次不该再排」的（节点被删/已完成/日期改了）
+      await Bridge.notify._cancelStale(ids);
+      if (!list.length) return 0;
+      return await Bridge.notify.schedule(list);
+    },
+
+    /** 取消上一轮排程里已经失效的 id；并把本轮 id 记下来供下次比对 */
+    async _cancelStale(currentIds) {
+      let prev = [];
+      try { prev = JSON.parse(localStorage.getItem('gzNotifyIds') || '[]') || []; } catch (e) { prev = []; }
+      const stale = prev.filter((i) => currentIds.indexOf(i) < 0);
+      if (stale.length) await Bridge.notify.cancel(stale);
+      try { localStorage.setItem('gzNotifyIds', JSON.stringify(currentIds)); } catch (e) { /* 忽略 */ }
+      return stale.length;
+    },
+
+    /**
+     * 注册「点击通知」回调：fn(pid) —— 原生走 localNotificationActionPerformed，
+     * Web 由 app.js 的 listenNotifyNav() 通过 SW message 处理（两条路径二选一）。
+     */
+    async onClick(fn) {
+      const p = nativePlugin('LocalNotifications');
+      if (p && p.addListener) {
+        try {
+          await p.addListener('localNotificationActionPerformed', (ev) => {
+            const extra = ev && ev.notification && ev.notification.extra;
+            if (extra && extra.pid) fn(extra.pid);
+          });
+          return true;
+        } catch (e) { return false; }
+      }
+      return false;
+    },
+
+    /** 通知被永久拒绝时的引导（原生无法直接打开系统设置页，给可操作指引） */
+    guidance() {
+      const brand = (typeof window !== 'undefined') ? '工账' : '本 App';
+      const pf = platformOf();
+      const rom = (typeof navigator !== 'undefined' ? String(navigator.userAgent || '') : '');
+      let tip = '请在系统设置 → 应用 → ' + brand + ' → 通知 中开启允许通知';
+      if (pf === 'android') {
+        if (/Xiaomi|Redmi|MIUI/i.test(rom)) tip = '小米/红米：设置 → 应用设置 → 应用管理 → ' + brand + ' → 通知管理（开启）；再到「省电策略」改为「无限制」，否则后台收不到';
+        else if (/HUAWEI|Harmony|Honor/i.test(rom)) tip = '华为/荣耀：设置 → 应用 → 应用管理 → ' + brand + ' → 通知管理（开启）；再到「电池 → 启动管理」关闭自动管理并允许后台活动';
+        else if (/OPPO|realme/i.test(rom)) tip = 'OPPO/realme：设置 → 应用管理 → ' + brand + ' → 通知管理（开启）；再到「电池 → 应用耗电管理」允许后台运行';
+        else if (/vivo/i.test(rom)) tip = 'vivo：设置 → 应用与权限 → 应用管理 → ' + brand + ' → 通知（开启）；再到「电池 → 后台高耗电」允许';
+        else if (/samsung/i.test(rom)) tip = '三星：设置 → 应用程序 → ' + brand + ' → 通知（开启）；再到「电池 → 背景使用限制」移出受限应用';
+      }
+      return tip;
+    },
+
+    /** Web 分支：沿用原有「SW 优先 + 页面内 Notification 兜底」的逻辑 */
+    _swReg: null,
+    async _ensureSW() {
+      if (Bridge.notify._swReg !== null) return Bridge.notify._swReg;
+      if (typeof navigator === 'undefined' || !navigator.serviceWorker || !/^https?:/.test(location.protocol)) {
+        Bridge.notify._swReg = false;
+        return false;
+      }
+      Bridge.notify._swReg = navigator.serviceWorker.register('./sw.js').then((reg) => reg).catch(() => false);
+      return Bridge.notify._swReg;
+    },
+    async _web(o) {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+      try {
+        const reg = await Bridge.notify._ensureSW();
+        if (reg && reg.showNotification) {
+          await reg.showNotification(o.title, {
+            body: o.body || '', tag: o.tag || 'gongzhang',
+            icon: './icon.svg', badge: './icon.svg', data: { pid: o.pid || '' }
+          });
+        } else {
+          const n = new Notification(o.title, { body: o.body || '', tag: o.tag || 'gongzhang', icon: './icon.svg' });
+          n.onclick = () => { try { window.focus(); } catch (e) {} if (o.pid) location.hash = '#/project/' + o.pid; };
+        }
+        return true;
+      } catch (e) { return false; }
+    }
+  },
+
+  /* ---------------- 3.2 相机 / 相册 / 文件选择 ---------------- */
+  camera: {
+    /**
+     * 取一张图片。
+     * @param {string} source 'camera'（拍照）| 'photos'（相册）
+     * @returns {Promise<{blob:Blob,type:string,name:string}|null>} 用户取消返回 null
+     */
+    async image(source) {
+      const p = nativePlugin('Camera');
+      if (p && p.getPhoto) {
+        try {
+          const photo = await p.getPhoto({
+            // 原生枚举是「大写字符串」：CameraSource{CAMERA,PHOTOS,PROMPT}、CameraResultType{uri,base64,dataUrl}
+            // 这里直接写字面量，避免为了拿枚举而引入打包器。
+            source: source === 'camera' ? 'CAMERA' : 'PHOTOS',
+            resultType: 'uri',
+            quality: 80,
+            allowEditing: false,
+            saveToGallery: false,
+            correctOrientation: true
+          });
+          // Uri 模式下 path 是平台完整文件 URL（file:///…），webPath 是 capacitor://…；两者都可被 convertFileSrc 处理
+          const rawUri = photo.path || photo.webPath;
+          if (!rawUri) return null;
+          // capacitor:// / file:// → WebView 可 fetch 的 https://localhost/_capacitor_file_/...
+          const c = capGlobal();
+          const url = (c && c.convertFileSrc) ? c.convertFileSrc(rawUri) : rawUri;
+          const res = await fetch(url);
+          const blob = await res.blob();
+          const name = 'photo_' + Date.now() + '.jpg';
+          return { blob: blob, type: blob.type || 'image/jpeg', name: name };
+        } catch (e) {
+          // 用户主动取消（插件会 reject 含 cancel 的信息）→ 静默返回 null，不打扰
+          if (e && e.message && /cancel/i.test(e.message)) return null;
+          // 其它失败（设备无摄像头 / 权限未授予 / 存储不可用）→ 带回原因，
+          // 否则上层只能静默无反应，用户会以为按钮坏了（模拟器上尤其常见）。
+          return { error: String((e && e.message) || '相机不可用') };
+        }
+      }
+      // Web 分支：沿用 <input type=file capture> 的既有体验
+      const f = await pickFileWeb('image/*', source === 'camera');
+      if (!f) return null;
+      return { blob: f, type: f.type || 'image/jpeg', name: f.name || ('photo_' + Date.now() + '.jpg') };
+    }
+  },
+
+  files: {
+    /** 通用文件选择（图片 + PDF 等）；走系统文件选择器 */
+    async pick(accept) {
+      const f = await pickFileWeb(accept || 'image/*,application/pdf,.pdf', false);
+      return f;
+    },
+
+    /**
+     * 导出备份：原生写入应用文档目录后用系统分享面板发出去
+     * （Android 11+ 分区存储下，直接写公共 Downloads 不可靠；交给用户选择保存位置最稳）。
+     * @returns {Promise<boolean>} 是否成功发出
+     */
+    async saveAndShare(name, text) {
+      const fs = nativePlugin('Filesystem');
+      const sh = nativePlugin('Share');
+      if (fs && sh) {
+        try {
+          await fs.writeFile({
+            path: '工账备份/' + name,
+            data: text,
+            directory: 'DOCUMENTS',
+            encoding: 'utf8',
+            recursive: true
+          });
+          const uri = await fs.getUri({ path: '工账备份/' + name, directory: 'DOCUMENTS' });
+          await sh.share({ title: name, files: [uri.uri], dialogTitle: '保存或发送备份' });
+          return true;
+        } catch (e) {
+          // 文件分享失败 → 退化为分享文本（备份很大时可能被截断，故仅作兜底）
+          try {
+            await sh.share({ title: name, text: text, dialogTitle: '发送备份' });
+            return true;
+          } catch (e2) { return false; }
+        }
+      }
+      // Web 分支：保持原有的 a[download] 行为
+      try {
+        const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        return true;
+      } catch (e) { return false; }
+    }
+  },
+
+  /* ---------------- 3.3 系统分享 ---------------- */
+  share: {
+    /** 分享文本；返回是否真的走了分享（false 表示应退化为复制） */
+    async text(o) {
+      const p = nativePlugin('Share');
+      if (p && p.share) {
+        try {
+          await p.share({ title: o.title || '', text: o.text || '', dialogTitle: o.title || '分享' });
+          return true;
+        } catch (e) {
+          if (e && e.message && /cancel/i.test(e.message)) return true; // 用户主动取消，别再退化成复制
+          return false;
+        }
+      }
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        try { await navigator.share({ title: o.title || '', text: o.text || '' }); return true; }
+        catch (e) { if (e && e.name === 'AbortError') return true; return false; }
+      }
+      return false;
+    },
+
+    /**
+     * 分享文件（统计长图）。原生：Blob → base64 → 写入缓存目录 → 取得 uri → 分享。
+     * @returns {Promise<boolean>} false 表示调用方应回退到「下载到本地」
+     */
+    async file(o) {
+      const p = nativePlugin('Share');
+      const fs = nativePlugin('Filesystem');
+      if (p && fs && o.blob) {
+        try {
+          const b64 = await blobToBase64(o.blob);
+          const path = 'share/' + (o.name || 'file');
+          await fs.writeFile({ path: path, data: b64, directory: 'CACHE', recursive: true });
+          const uri = await fs.getUri({ path: path, directory: 'CACHE' });
+          await p.share({ title: o.title || '', text: o.text || '', files: [uri.uri], dialogTitle: o.title || '分享' });
+          return true;
+        } catch (e) {
+          if (e && e.message && /cancel/i.test(e.message)) return true;
+          return false;
+        }
+      }
+      // Web 分支：navigator.share(files) → 否则交给调用方下载
+      if (typeof navigator !== 'undefined' && navigator.canShare && o.file && navigator.canShare({ files: [o.file] }) && navigator.share) {
+        try { await navigator.share({ files: [o.file], title: o.title || '' }); return true; }
+        catch (e) { if (e && e.name === 'AbortError') return true; return false; }
+      }
+      return false;
+    }
+  },
+
+  /* ---------------- 3.4 剪贴板 ---------------- */
+  clipboard: {
+    async write(text) {
+      const p = nativePlugin('Clipboard');
+      if (p && p.write) {
+        try { await p.write({ string: text }); return true; } catch (e) { return false; }
+      }
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) { /* 降级到 execCommand */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        return true;
+      } catch (e2) { return false; }
+    }
+  },
+
+  /* ---------------- 3.5 物理返回键（Android 专属） ---------------- */
+  back: {
+    /**
+     * 安装返回键监听。handler 由业务层提供，返回 true 表示已消费该次返回。
+     * 只在原生环境生效，Web 下静默跳过。
+     */
+    async install(handler) {
+      const p = nativePlugin('App');
+      if (!p || !p.addListener) return false;
+      try {
+        const h = await p.addListener('backButton', () => {
+          Promise.resolve(handler()).catch(() => {});
+        });
+        Bridge.back._handle = h;
+        return true;
+      } catch (e) { return false; }
+    },
+    _handle: null,
+    /** 退出 App（原生）；Web 下无操作 */
+    async exitApp() {
+      const p = nativePlugin('App');
+      if (p && p.exitApp) { try { await p.exitApp(); } catch (e) { /* 忽略 */ } }
+    }
+  },
+
+  /* ---------------- 3.6 状态栏（跟随应用内主题） ---------------- */
+  statusBar: {
+    /**
+     * @param {string} theme 'paper'（暖纸账本，浅底深字）| 'dark'（墨绿夜读，深底浅字）
+     */
+    async apply(theme) {
+      const p = nativePlugin('StatusBar');
+      if (!p) return false;
+      const dark = theme === 'dark';
+      try {
+        if (p.setOverlaysWebView) await p.setOverlaysWebView({ overlay: false });
+        if (p.setBackgroundColor) await p.setBackgroundColor({ color: dark ? '#15352a' : '#f6f1e6' });
+        if (p.setStyle) await p.setStyle({ style: dark ? 'LIGHT' : 'DARK' }); // LIGHT=浅色图标 / DARK=深色图标
+        return true;
+      } catch (e) { return false; }
+    }
+  },
+
+  /* ---------------- 3.7 应用生命周期（可选，供后续扩展） ---------------- */
+  lifecycle: {
+    async onResume(fn) {
+      const p = nativePlugin('App');
+      if (!p || !p.addListener) return false;
+      try { await p.addListener('appStateChange', (s) => { if (s && s.isActive) fn(); }); return true; }
+      catch (e) { return false; }
+    }
+  },
+
+  /* ---------------- 3.8 屏幕方向（施工进度页自动横屏，P1） ---------------- */
+  screen: {
+    /**
+     * 锁定方向。@param {'landscape'|'portrait'} dir
+     * @returns {Promise<boolean>} 是否真的锁上（Web 非全屏一般锁不了，属正常）
+     */
+    async lock(dir) {
+      const p = nativePlugin('ScreenOrientation');
+      if (p && p.lock) {
+        try { await p.lock({ orientation: dir }); return true; }
+        catch (e) { return false; }
+      }
+      try {
+        if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.lock) {
+          await screen.orientation.lock(dir === 'landscape' ? 'landscape' : 'portrait');
+          return true;
+        }
+      } catch (e) { /* 非全屏 Web 不允许锁方向，静默降级 */ }
+      return false;
+    },
+
+    /** 解除锁定，恢复「跟随系统传感器」 */
+    async unlock() {
+      const p = nativePlugin('ScreenOrientation');
+      if (p && p.unlock) { try { await p.unlock(); return true; } catch (e) { return false; } }
+      try { if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.unlock) await screen.orientation.unlock(); }
+      catch (e) { /* ignore */ }
+      return false;
+    },
+
+    /** 当前方向：'landscape' | 'portrait' */
+    async orientation() {
+      const p = nativePlugin('ScreenOrientation');
+      if (p && p.getCurrentOrientation) {
+        try {
+          const r = await p.getCurrentOrientation();
+          return /landscape/i.test((r && r.type) || '') ? 'landscape' : 'portrait';
+        } catch (e) { return 'portrait'; }
+      }
+      return (typeof window !== 'undefined' && window.innerWidth > window.innerHeight) ? 'landscape' : 'portrait';
+    }
+  },
+
+  /* ---------------- 3.9 语音输入（P3，当前仅 Web 分支可用） ---------------- */
+  speech: {
+    supported() {
+      return !!(typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition));
+    }
+  }
+};
+
+/* ---------------- 4. 首次运行向导（阶段 C5，仅原生环境展示） ---------------- */
+/**
+ * 空账本时给用户三条明确出路，避免打开就是一片空白不知从何下手。
+ * @param {object} hooks {onDemo, onImport, onBlank}
+ */
+function firstRunWizard(hooks) {
+  const item = (icon, title, desc, fn) =>
+    h('button', {
+      class: 'btn ghost', style: 'display:block;width:100%;text-align:left;padding:12px 14px;margin-bottom:8px',
+      onclick: () => { closeModal(); fn(); }
+    }, [
+      h('div', { style: 'font-size:var(--g-fs-base);font-weight:600' }, icon + ' ' + title),
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:3px' }, desc)
+    ]);
+
+  openModal('欢迎使用工账', h('div', {}, [
+    h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-bottom:12px' },
+      '选择一种方式开始。数据只保存在本机，随时可以在「我的 → 数据安全」里备份或恢复。'),
+    item('🎬', '先看看演示账本', '载入 2 个示例项目，随便点、随便改，熟悉后再清空', () => hooks.onDemo && hooks.onDemo()),
+    item('📥', '从备份恢复', '如果你在网页版导出过 JSON 备份，选这个直接导入', () => hooks.onImport && hooks.onImport()),
+    item('🧹', '空白开始记账', '不载入任何示例数据，直接建立自己的第一个项目', () => hooks.onBlank && hooks.onBlank())
+  ]), []);
+}
+
 /* ===== app ===== */
 
 
@@ -1174,6 +2469,171 @@ async function getPlanTemplates() {
   return t;
 }
 
+/* ================= 工作日排期引擎（v2.11.0） =================
+   竣工日期 = 开工日期 + N 个工作日（可剔除周末与法定节假日）。
+   户型 → 合同工期（工作日）：平层 75 / 跃层 90 / 别墅 130；工装不预设，由用户自填。 */
+
+const HOUSE_WORKDAYS = { flat: 75, duplex: 90, villa: 130, fitup: 0 };
+const HOUSE_KINDS = [
+  { id: 'flat', label: '平层' }, { id: 'duplex', label: '跃层' }, { id: 'villa', label: '别墅' }
+];
+
+// 内置法定节假日（2026-2027 参考值）。国务院每年安排会微调，
+// 用户可在「设置 → 项目模板 → 节假日」增删（存 meta.holidays），自定义项与内置项取并集。
+const HOLIDAY_RANGES = [
+  ['2026-01-01', '2026-01-03'], ['2026-02-15', '2026-02-22'], ['2026-04-04', '2026-04-06'],
+  ['2026-05-01', '2026-05-05'], ['2026-06-19', '2026-06-21'], ['2026-09-25', '2026-09-27'],
+  ['2026-10-01', '2026-10-08'],
+  ['2027-01-01', '2027-01-03'], ['2027-02-05', '2027-02-11'], ['2027-04-04', '2027-04-06'],
+  ['2027-05-01', '2027-05-05'], ['2027-06-09', '2027-06-11'], ['2027-09-15', '2027-09-17'],
+  ['2027-10-01', '2027-10-08']
+];
+const HOLIDAYS_BUILTIN = (function () {
+  const out = [];
+  HOLIDAY_RANGES.forEach(([a, b]) => {
+    const cur = new Date(a + 'T00:00:00'), end = new Date(b + 'T00:00:00');
+    while (cur <= end) { out.push(ymd(cur)); cur.setDate(cur.getDate() + 1); }
+  });
+  return out;
+})();
+
+/** 节假日集合（内置 + 用户自定义），键为 'YYYY-MM-DD' */
+async function getHolidays() {
+  const extra = await Meta.get('holidays', null);
+  const set = {};
+  HOLIDAYS_BUILTIN.concat(Array.isArray(extra) ? extra : [])
+    .forEach((d) => { if (d) set[String(d).slice(0, 10)] = 1; });
+  return set;
+}
+
+/** 是否休息日：周末 或 命中节假日表 */
+function isRestDay(iso, holidays) {
+  if (!iso) return true;
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return true;
+  const w = d.getDay();
+  if (w === 0 || w === 6) return true;
+  return !!(holidays && holidays[iso]);
+}
+
+/** 从 iso 起（含当天）向后找第一个工作日 */
+function nextWorkday(iso, holidays) {
+  let s = iso;
+  if (!s) return '';
+  const d = new Date(s + 'T00:00:00');
+  let guard = 0;
+  while (isRestDay(s, holidays) && guard++ < 400) { d.setDate(d.getDate() + 1); s = ymd(d); }
+  return s;
+}
+
+/**
+ * 竣工日期 = 开工日期 + n 个工作日（开工当天若为工作日即计第 1 天）。
+ * @param n 工作日数（<=0 直接返回开工日）
+ * @param skipRest true=剔除周末与节假日；false=按自然日累加
+ */
+function addWorkdays(startIso, n, holidays, skipRest) {
+  if (!startIso) return '';
+  const cnt = Number(n) || 0;
+  const d = new Date(startIso + 'T00:00:00');
+  if (isNaN(d.getTime())) return '';
+  if (cnt <= 0) return startIso;
+  if (skipRest === false) {
+    d.setDate(d.getDate() + cnt - 1);
+    return ymd(d);
+  }
+  let cur = nextWorkday(startIso, holidays);
+  let left = cnt - 1;
+  let guard = 0;
+  const cd = new Date(cur + 'T00:00:00');
+  while (left > 0 && guard++ < 4000) {
+    cd.setDate(cd.getDate() + 1);
+    if (!isRestDay(ymd(cd), holidays)) left--;
+  }
+  return ymd(cd);
+}
+
+/** 统计 [a, b] 区间内的工作日天数（含首尾） */
+function countWorkdays(aIso, bIso, holidays) {
+  if (!aIso || !bIso) return 0;
+  const d = new Date(aIso + 'T00:00:00'), end = new Date(bIso + 'T00:00:00');
+  if (isNaN(d.getTime()) || isNaN(end.getTime())) return 0;
+  let n = 0, guard = 0;
+  while (d <= end && guard++ < 5000) {
+    if (!isRestDay(ymd(d), holidays)) n++;
+    d.setDate(d.getDate() + 1);
+  }
+  return n;
+}
+
+/**
+ * 把阶段列表按「可用工作日总数」比例排期，使首阶段落在开工日、末阶段收在竣工日。
+ * 模板各阶段 days 之和通常远大于合同工期（参考表按工序给的自然日），
+ * 因此先按占比折算每个阶段的工作日，再顺序推进，保证甘特图区间 = [开工, 竣工]。
+ * @param list [{name, days}]  @param startIso 开工日  @param totalWorkdays 可用工作日（0=不折算，按自然日排）
+ */
+function scheduleStages(list, startIso, totalWorkdays, holidays, skipRest) {
+  const out = [];
+  if (!startIso || !list.length) {
+    list.forEach((it) => out.push({ name: it.name || '', planStart: '', planEnd: '' }));
+    return out;
+  }
+  const total = Number(totalWorkdays) || 0;
+  const rawDays = list.map((it) => Math.max(0, Number(it.days) || 0));
+  const sum = rawDays.reduce((a, b) => a + b, 0);
+
+  // 折算每阶段工作日：比例分配，至少 1 天；差值补给工期最长的阶段，保证总和 = total。
+  // 「开工仪式」是当天完成的节点，固定 1 个工作日且不参与比例基数，避免其后空出一天。
+  const anchorIdx = list.findIndex((x) => (x.name || '').indexOf('开工仪式') >= 0);
+  let alloc = rawDays.slice();
+  if (total > 0 && sum > 0) {
+    const restSum = anchorIdx >= 0 ? sum - rawDays[anchorIdx] : sum;
+    const restTotal = anchorIdx >= 0 ? Math.max(1, total - 1) : total;
+    alloc = rawDays.map((d, i) => {
+      if (anchorIdx === i) return 1;
+      return d > 0 ? Math.max(1, Math.round(d / (restSum || sum) * restTotal)) : 0;
+    });
+    let diff = total - alloc.reduce((a, b) => a + b, 0);
+    const order = rawDays.map((d, i) => i)
+      .filter((i) => i !== anchorIdx)
+      .sort((a, b) => rawDays[b] - rawDays[a]);
+    let gi = 0;
+    while (diff !== 0 && gi++ < 500 && order.length) {
+      const i = order[(gi - 1) % order.length];
+      if (diff > 0) { alloc[i]++; diff--; }
+      else if (alloc[i] > 1) { alloc[i]--; diff++; }
+    }
+  }
+
+  let cursor = startIso;
+  list.forEach((it, i) => {
+    const wd = alloc[i];
+    if (!wd) { out.push({ name: it.name || '', planStart: '', planEnd: '' }); return; }
+    const s = (skipRest === false) ? cursor : nextWorkday(cursor, holidays);
+    if (!s) { out.push({ name: it.name || '', planStart: '', planEnd: '' }); return; }
+    const e = (skipRest === false) ? (function () { const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + wd - 1); return ymd(d); })()
+      : addWorkdays(s, wd, holidays, true);
+    out.push({ name: it.name || '', planStart: s, planEnd: e });
+    const nd = new Date(e + 'T00:00:00'); nd.setDate(nd.getDate() + 1);
+    cursor = ymd(nd);
+  });
+
+  // 锚点：开工仪式 = 开工日；软装窗帘进场安装 = 竣工日（避免按比例折算后对不上合同工期）
+  const endDate = out.length ? out[out.length - 1].planEnd : '';
+  const findByName = (kw) => out.findIndex((x) => (x.name || '').indexOf(kw) >= 0);
+  const iStart = findByName('开工仪式');
+  const iEnd = findByName('软装窗帘进场安装');
+  if (out.length) {
+    if (out[0].planStart) out[0].planStart = startIso;
+    if (iStart >= 0 && out[iStart].planStart) { out[iStart].planStart = startIso; out[iStart].planEnd = startIso; }
+    const last = iEnd >= 0 ? iEnd : out.length - 1;
+    if (out[last].planStart) {
+      out[last].planEnd = endDate || out[last].planEnd;
+      if (out[last].planStart > out[last].planEnd) out[last].planStart = out[last].planEnd;
+    }
+  }
+  return out;
+}
+
 // ---------- 账户 / 分类树 / 模板（存 meta，兼容旧数据） ----------
 async function getAccounts() {
   let list = await Meta.get('accounts', null);
@@ -1183,6 +2643,18 @@ async function getAccounts() {
   }
   return list;
 }
+// 工种（可维护）：首次用 util 内置值初始化，之后以 meta.trades 为准
+async function getTrades() {
+  let list = await Meta.get('trades', null);
+  if (!list || !list.length) { list = TRADES.slice(); await Meta.set('trades', list); }
+  return list;
+}
+// 材料大类（可维护，用户自行累计，默认空）
+async function getMaterials() {
+  const list = await Meta.get('materials', null);
+  return Array.isArray(list) ? list : [];
+}
+
 async function getCatTree() {
   let tree = await Meta.get('catTree', null);
   if (!tree || !tree.length) {
@@ -1255,7 +2727,7 @@ function M(n) { return state.hideMoney ? '¥****' : fmtMoney(n); }
 // 否则会出现「收入 · 材料费」「支出 · 发票类型」这类串味数据。
 const TX_TYPE_FIELDS = {
   expense: ['category', 'subCat', 'region', 'trade', 'material', 'planCat', 'memberId', 'memberName', 'merchantId', 'merchantName'],
-  income: ['subType', 'invoiceStatus', 'invoiceType', 'taxAmount'],
+  income: ['subType', 'invoiceStatus', 'invoiceType', 'taxAmount', 'taxRate', 'taxBase'],
   transfer: ['fromAccount', 'toAccount']
 };
 
@@ -1398,11 +2870,24 @@ async function attURL(id) {
 // 并发渲染保护：每次 render 递增代序号，慢的旧渲染在落盘前发现已被替代则丢弃，
 // 避免连续保存/快速切换时新旧渲染交错导致视图内容混搭。
 let _renderSeq = 0;
+/** 性能埋点（P1-8）：数据写到 window.__gzPerf，用 chrome://inspect 的 Console 直接读 */
+function perfMark(label, t0) {
+  const d = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0);
+  try { window.__gzPerf = window.__gzPerf || {}; window.__gzPerf[label] = d; } catch (e) { /* ignore */ }
+  return d;
+}
+
 async function render() {
+  const _t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
   const seq = ++_renderSeq;
   const hash = location.hash.replace(/^#\/?/, '');
   const parts = hash.split('/');
   const route = parts[0] || 'home';
+
+  // 进出「施工进度」页时锁定 / 解锁横屏（竖屏下甘特图太窄，独立页默认铺满横屏）
+  if (route === 'gantt' && _lastRoute !== 'gantt') enterSchedule();
+  else if (route !== 'gantt' && _lastRoute === 'gantt') leaveSchedule();
+  _lastRoute = route;
 
   let node;
   if (route === 'projects') node = await projectsView();
@@ -1418,13 +2903,16 @@ async function render() {
     node = await ledgerView();
   }
   else if (route === 'project' && parts[1]) node = await projectDetailView(parts[1]);
+  else if (route === 'gantt' && parts[1]) node = await ganttView(parts[1]);
   else node = await homeView();
 
   if (seq !== _renderSeq) return; // 已有更新的渲染，丢弃本次结果
   const view = document.getElementById('view');
   view.innerHTML = '';
   view.appendChild(node);
+  perfMark('render:' + route, _t0);
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.route === route));
+  document.body.dataset.route = route;   // 供 CSS 做「整页模式」（如施工进度页隐藏底栏、铺满宽度）
   setupFab(route, parts[1]);
 }
 
@@ -1555,7 +3043,7 @@ function drillToLedger(label, ids, from) { setDrill(label, ids, from); }
 function statsDrill(label, ids) { drillToLedger(label, ids, 'stats'); }
 
 async function homeView() {
-  setPageTitle('装修记账');
+  setPageTitle('工账');
   const [projects, txs, rems, isDemo, cfg] = await Promise.all([
     Projects.all(), Transactions.all(), Reminders.all(), Meta.get('demoMode', false), getBoardConfig()
   ]);
@@ -1589,7 +3077,7 @@ async function homeView() {
     ]));
   } else {
     wrap.appendChild(h('div', { class: 'row-between', style: 'margin-bottom:10px' }, [
-      h('h2', { class: 'section', style: 'margin:0' }, '装修记账'),
+      h('h2', { class: 'section', style: 'margin:0' }, '工账'),
       h('div', { style: 'display:flex;gap:8px;flex:0 0 auto' }, [
         h('button', { class: 'btn sm ghost', title: '自定义首页卡片', onclick: () => { state.boardEdit = true; render(); } }, '⚙️ 看板配置'),
         h('button', { class: 'eye-btn', title: '隐藏/显示金额', onclick: () => { state.hideMoney = !state.hideMoney; Meta.set('hideMoney', state.hideMoney).then(render); } }, state.hideMoney ? '🙈' : '👁')
@@ -2136,7 +3624,8 @@ function ledgerRow(t, pname, ctx) {
   ]);
   const textCol = h('div', { style: 'min-width:0;flex:1' }, [
     h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, title),
-    h('div', { class: 'meta', style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, sub + (t.time ? ' ' + t.time : ''))
+    h('div', { class: 'meta', style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' },
+      sub + (t.time ? ' ' + t.time : ''))
   ]);
   const left = h('div', { style: 'display:flex;gap:10px;align-items:center;min-width:0;flex:1' }, batch
     ? (() => {
@@ -2274,6 +3763,232 @@ async function projectsView() {
 }
 
 // ---------- 项目详情 ----------
+// ---------- 施工进度（独立页 #/gantt/:id）+ 自动横屏 ----------
+// 竖屏下甘特图要么挤成一团、要么要横向拖很久，所以单独开一页：
+//   · 进入即自动切横屏（可在「我的 → 设置」关掉自动旋转）
+//   · 页面内随时手动切回竖屏 / 再切横屏；手动切过之后本次不再强制
+//   · 退出（返回按钮 / 物理返回键）自动解除锁定，恢复跟随系统
+let _ganttZoom = 1;         // 时间轴缩放
+let _ganttDeps = false;     // 依赖连线 + 关键路径
+let _ganttDrag = false;     // 拖拽改期模式
+let _ganttManual = false;   // 用户是否手动切过方向
+let _lastRoute = '';        // 进出施工进度页时做方向锁定/解锁
+
+/** 进入施工进度页：按需锁横屏 */
+async function enterSchedule() {
+  _ganttManual = false;
+  const auto = await Meta.get('ganttAutoLandscape', true);
+  if (auto === false) return false;
+  const ok = await Bridge.screen.lock('landscape');
+  return ok;
+}
+/** 离开施工进度页：解除锁定，恢复跟随系统 */
+async function leaveSchedule() {
+  _ganttManual = false;
+  try { await Bridge.screen.unlock(); } catch (e) { /* ignore */ }
+}
+/** 手动切换方向（用户可控） */
+async function toggleOrientation(btn) {
+  const cur = await Bridge.screen.orientation();
+  const next = cur === 'landscape' ? 'portrait' : 'landscape';
+  _ganttManual = true;
+  const ok = await Bridge.screen.lock(next);
+  if (!ok) { toast('当前环境不支持锁定方向，请手动旋转手机'); return; }
+  if (btn) btn.textContent = next === 'landscape' ? '⛶ 切竖屏' : '⛶ 切横屏';
+  toast(next === 'landscape' ? '已切到横屏' : '已切回竖屏');
+}
+
+async function ganttView(pid) {
+  const p = await Projects.get(pid);
+  if (!p) { location.hash = '#/projects'; return h('div'); }
+  setPageTitle('施工进度 · ' + (p.name || '项目'));
+  const locked = p.status === 'settled';
+  const wrap = h('div');
+  const card = h('div', { class: 'card' });
+
+  // —— 顶栏：返回 / 标题 / 方向切换 / 缩放 ——
+  const rotBtn = h('button', { class: 'btn sm ghost', title: '随时手动切换横竖屏', onclick: () => toggleOrientation(rotBtn) }, '⛶ 切竖屏');
+  card.appendChild(h('div', { class: 'row-between' }, [
+    h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/project/' + p.id; } }, '← 返回项目'),
+    h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end' }, [
+      rotBtn,
+      h('button', { class: 'btn sm ghost', onclick: () => { _ganttZoom = Math.max(0.5, _ganttZoom - 0.25); render(); } }, 'A-'),
+      h('button', { class: 'btn sm ghost', onclick: () => { _ganttZoom = Math.min(3, _ganttZoom + 0.25); render(); } }, 'A+')
+    ])
+  ]));
+
+  const stages = p.stages || [];
+  if (!stages.length) {
+    card.appendChild(h('div', { class: 'empty', style: 'margin-top:10px' }, [
+      h('div', { class: 'big' }, '📊'),
+      h('div', {}, '该项目还没有施工阶段，先回项目页「添加/改名」设置阶段与起止时间')
+    ]));
+    wrap.appendChild(card);
+    return wrap;
+  }
+
+  const _gt0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const model = ganttModel(stages, p);
+  const avail = Math.max(520, (window.innerWidth || 900) - 430);
+  const tlW = Math.max(560, Math.min(2800, Math.max(avail, model.totalDays * 8) * _ganttZoom));
+  const step = ganttTickStep(model, tlW);
+  const stepLabel = step === 1 ? '日' : (step === 2 ? '双日' : (step === 7 ? '周' : '双周'));
+
+  const onDragChange = (idx, s, e) => {
+    const r = model.rows[idx]; if (!r) return;
+    r.raw.planStart = gIso(s); r.raw.planEnd = gIso(e);
+    Projects.save(p).then(() => { toast('已改期：' + r.name + '  ' + gIso(s) + ' ~ ' + gIso(e)); render(); });
+  };
+
+  // —— 图（横屏下按可视宽度铺满，仍可横向滚动） ——
+  const svg = ganttSVG(model, {
+    title: (p.name || '未命名') + ' · 施工进度计划横道图',
+    withTable: true, rowH: 34, timelineWidth: tlW,
+    deps: _ganttDeps, drag: _ganttDrag && !locked, onChange: onDragChange
+  });
+  perfMark('gantt-model+svg', _gt0);
+  const printArea = h('div', { class: 'gantt-print',
+    style: 'overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface)' }, svg);
+  card.appendChild(printArea);
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:6px' },
+    '共 ' + stages.length + ' 项 · 总工期 ' + model.totalDays + ' 日历天（' + gIso(model.day0) + ' ~ ' + gIso(model.dayN) + '）· '
+    + '完成 ' + model.doneN + '/' + stages.length + ' · ' + stepLabel + '刻度 · 缩放 ' + Math.round(_ganttZoom * 100) + '%'
+    + (model.criticalDays ? ' · 关键路径 ' + model.criticalDays + ' 天' : '')));
+
+  // —— 工具条 ——
+  const tools = h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px' });
+  tools.appendChild(h('button', { class: 'btn sm ' + (_ganttDeps ? 'primary' : 'ghost'), style: 'width:auto;flex:1 1 auto;min-width:104px',
+    onclick: () => { _ganttDeps = !_ganttDeps; render(); } }, _ganttDeps ? '依赖/关键路径 ✓' : '依赖/关键路径'));
+  tools.appendChild(h('button', { class: 'btn sm ' + (_ganttDrag ? 'primary' : 'ghost'), style: 'width:auto;flex:1 1 auto;min-width:104px',
+    onclick: () => { if (locked) { toast('项目已归档锁定'); return; } _ganttDrag = !_ganttDrag; toast(_ganttDrag ? '已进入拖拽改期：拖动横道改日期，拖两端改单边' : '已退出拖拽改期'); render(); } },
+    _ganttDrag ? '拖拽改期 ✓' : '拖拽改期'));
+  card.appendChild(tools);
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:6px' },
+    '依赖/关键路径：在下方「阶段编辑」里给阶段选「前置阶段」后，图上会画出箭头并高亮工期最长的那条链路（红色）。'));
+
+  // —— 导出 ——
+  const fname = '施工进度计划横道图_' + (p.name || '项目').replace(/[\\/:*?"<>|]/g, '_') + '_' + today();
+  const xlsxRows = model.rows.map((r, i) => {
+    const dts = gRowDates(r);
+    let status = '未开始', note = '';
+    if (r.milestone) status = '里程碑';
+    else if (r.done) status = '已完成';
+    else if (dts.e && daysDiff(dts.e, today()) < 0) { status = '已逾期'; note = '逾期 ' + (-daysDiff(dts.e, today())) + ' 天'; }
+    else if (dts.s && daysDiff(today(), dts.s) >= 0) status = '进行中';
+    if (r.done && !isNaN(r.act) && dts.e) {
+      const dv = daysDiff(gIso(r.act), dts.e);
+      note = dv === 0 ? '按期完成' : (dv > 0 ? '比计划晚 ' + dv + ' 天' : '比计划早 ' + (-dv) + ' 天');
+    }
+    if (model.critical && model.critical.has(r.id)) note = (note ? note + '；' : '') + '关键路径';
+    return [i + 1, r.name, dts.s || '—', dts.e || '—', r.milestone ? 0 : (dts.days || ''), status, r.act ? gIso(r.act) : '', note];
+  });
+
+  const btns = h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px' });
+  btns.appendChild(h('button', { class: 'btn primary', style: 'width:auto;flex:1 1 auto;min-width:120px', onclick: async () => {
+    try {
+      const blob = buildXlsx({
+        sheet: '进度计划',
+        title: [(p.name || '未命名') + ' 施工进度计划横道图'],
+        head: ['序号', '工作名称', '开始时间', '结束时间', '持续天数', '状态', '实际完成', '备注'],
+        rows: xlsxRows,
+        widths: [6, 26, 12, 12, 10, 10, 12, 22]
+      });
+      await ganttSaveBlob(blob, fname + '.xlsx', '施工进度计划横道图');
+    } catch (e) { toast('导出失败：' + (e && e.message || e)); }
+  } }, '⬇ 导出 Excel'));
+  btns.appendChild(h('button', { class: 'btn ghost', style: 'width:auto;flex:1 1 auto;min-width:92px', onclick: async () => {
+    try { await ganttSaveBlob(await ganttSVGPng(svg, 3), fname + '.png', '施工进度计划横道图'); }
+    catch (e) { toast('PNG 导出失败：' + (e && e.message || e)); }
+  } }, 'PNG(3x)'));
+  btns.appendChild(h('button', { class: 'btn ghost', style: 'width:auto;flex:1 1 auto;min-width:92px', onclick: async () => {
+    try { await ganttSaveBlob(await ganttPdf(svg, 2), fname + '.pdf', '施工进度计划横道图'); }
+    catch (e) { toast('PDF 生成失败：' + (e && e.message || e)); }
+  } }, 'PDF'));
+  btns.appendChild(h('button', { class: 'btn ghost', style: 'width:auto;flex:1 1 auto;min-width:92px', onclick: async () => {
+    const b = new Blob([ganttSVGText(svg)], { type: 'image/svg+xml;charset=utf-8' });
+    await ganttSaveBlob(b, fname + '.svg', '施工进度计划横道图');
+  } }, 'SVG'));
+  btns.appendChild(h('button', { class: 'btn ghost', style: 'width:auto;flex:1 1 auto;min-width:92px', title: '调起系统打印，可选「另存为 PDF」', onclick: () => {
+    toast('在打印面板选「另存为 PDF」、纸张横向'); setTimeout(() => { try { window.print(); } catch (e) { toast('当前环境不支持打印，请用 PDF 按钮'); } }, 600);
+  } }, '打印'));
+  card.appendChild(btns);
+
+  // —— 阶段编辑（勾选 / 日期 / 前置 / 里程碑）——
+  const editor = h('div');
+  stages.forEach((s) => {
+    const box = h('div', { style: 'border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:8px' });
+    const row = h('div', { style: 'display:flex;gap:8px;align-items:center' });
+    const cb = h('input', { type: 'checkbox', style: 'width:18px;height:18px;flex:0 0 auto' });
+    cb.checked = !!s.done; cb.disabled = locked;
+    cb.addEventListener('change', () => { s.done = cb.checked; if (s.done && !s.date) s.date = today(); Projects.save(p).then(render); });
+    row.appendChild(cb);
+    row.appendChild(h('div', { style: 'flex:1;min-width:0;font-weight:600;font-size:var(--g-fs-md)' }, s.name || '未命名阶段'));
+    box.appendChild(row);
+    const row2 = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap' });
+    const mk = (label, key, width) => {
+      const w2 = h('div', { style: 'display:flex;gap:3px;align-items:center;flex:1;min-width:0' });
+      w2.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-xs);flex:0 0 auto' }, label));
+      const inp = h('input', { type: 'date', value: s[key] || '', title: label, style: 'width:' + width + ';min-width:0;flex:1' });
+      if (locked) inp.disabled = true;
+      inp.addEventListener('change', () => { s[key] = inp.value; Projects.save(p).then(render); });
+      w2.appendChild(inp); return w2;
+    };
+    row2.appendChild(mk('预计起', 'planStart', '96px'));
+    row2.appendChild(mk('预计止', 'planEnd', '96px'));
+    row2.appendChild(mk('实际完', 'date', '96px'));
+    box.appendChild(row2);
+    box.appendChild(stageExtraRow(p, s, stages, locked));
+    editor.appendChild(box);
+  });
+  const editBtn = h('button', { class: 'btn sm ghost', style: 'margin-top:10px', onclick: () => {
+    const show = editor.style.display === 'none';
+    editor.style.display = show ? '' : 'none';
+    editBtn.textContent = show ? '收起阶段编辑' : '阶段编辑（日期/前置/里程碑）';
+  } }, '阶段编辑（日期/前置/里程碑）');
+  editor.style.display = 'none';
+  card.appendChild(editBtn);
+  card.appendChild(editor);
+  wrap.appendChild(card);
+
+  // —— 项目切换 ——
+  const all = await Projects.all();
+  const others = all.filter((x) => x.id !== p.id && (x.stages || []).length);
+  if (others.length) {
+    const sw = h('div', { class: 'card' });
+    sw.appendChild(h('div', { style: 'font-weight:700;margin-bottom:6px' }, '切换到其它项目'));
+    others.slice(0, 12).forEach((x) => {
+      sw.appendChild(h('div', { class: 'list-item', style: 'cursor:pointer', onclick: () => { location.hash = '#/gantt/' + x.id; } }, [
+        h('span', { style: 'font-weight:600' }, x.name || '未命名'),
+        h('span', { class: 'muted' }, (x.stages || []).length + ' 项 →')
+      ]));
+    });
+    wrap.appendChild(sw);
+  }
+  return wrap;
+}
+
+/** 阶段编辑的第三行：前置阶段 + 里程碑（两个入口共用） */
+function stageExtraRow(p, s, stages, locked) {
+  const row = h('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap' });
+  const selWrap = h('div', { style: 'display:flex;gap:3px;align-items:center;flex:1;min-width:0' });
+  selWrap.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-xs);flex:0 0 auto' }, '前置'));
+  const sel = h('select', { style: 'flex:1;min-width:0;font-size:var(--g-fs-sm)' });
+  sel.appendChild(h('option', { value: '' }, '无'));
+  stages.forEach((x) => { if (x.id !== s.id) sel.appendChild(h('option', { value: x.id }, x.name || '未命名')); });
+  sel.value = s.pred || '';
+  if (locked) sel.disabled = true;
+  sel.addEventListener('change', () => { s.pred = sel.value; Projects.save(p).then(render); });
+  selWrap.appendChild(sel);
+  row.appendChild(selWrap);
+  const lab = h('label', { style: 'display:flex;gap:4px;align-items:center;font-size:var(--g-fs-sm);flex:0 0 auto' });
+  const cb = h('input', { type: 'checkbox', style: 'width:16px;height:16px' });
+  cb.checked = !!s.milestone; cb.disabled = locked;
+  cb.addEventListener('change', () => { s.milestone = cb.checked; Projects.save(p).then(render); });
+  lab.appendChild(cb); lab.appendChild(document.createTextNode('里程碑'));
+  row.appendChild(lab);
+  return row;
+}
+
 async function projectDetailView(id) {
   const p = await Projects.get(id);
   if (!p) { location.hash = '#/projects'; return h('div'); }
@@ -2290,12 +4005,16 @@ async function projectDetailView(id) {
     h('div', { style: 'font-weight:700;font-size:var(--g-fs-lg)' }, p.name || '未命名'),
     h('span', { class: 'tag ' + (STATUS_MAP[p.status] || {}).cls }, (STATUS_MAP[p.status] || {}).label || '进行中')
   ]));
+  const projTypeLabel = (p.projType === 'fitup' || p.houseKind === 'fitup') ? '工装项目' : '家装项目';
+  const kindLabel = (HOUSE_KINDS.find((k) => k.id === p.houseKind) || {}).label || '';
   const fields = [
-    ['客户', p.clientName], ['电话', p.phone], ['地址', p.address],
+    ['项目类型', projTypeLabel + (kindLabel ? ' · ' + kindLabel : '')],
+    ['客户', p.clientName], ['电话', p.phone], ['备用号码', p.phone2], ['地址', p.address],
     ['户型', p.houseType], ['建筑面积', p.buildArea ? p.buildArea + ' ㎡' : '—'], ['施工面积', p.constructArea ? p.constructArea + ' ㎡' : '—'],
     ['施工经理', p.manager], ['设计师', p.designer],
     ['合同金额', p.contractAmount ? M(p.contractAmount) : '—'],
     ['成本预算', p.costBudget ? M(p.costBudget) : '（未设，默认=合同额）'],
+    ['合同工期', p.workdays ? p.workdays + ' 个工作日' + (p.skipRest !== false ? '（剔除周末及节假日）' : '') : '—'],
     ['开工', fmtDate(p.startDate)], ['竣工', fmtDate(p.endDate)], ['备注', p.note]
   ];
   fields.forEach(([k, v]) => {
@@ -2304,6 +4023,16 @@ async function projectDetailView(id) {
       h('span', { style: 'font-size:var(--g-fs-md);max-width:60%;text-align:right' }, String(v))
     ]));
   });
+  // 一键拨号：主号 / 备用号（网页与原生 WebView 均走 tel: 协议）
+  if (p.phone || p.phone2) {
+    const dialRow = h('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' });
+    [['📞 拨号', p.phone], ['📞 拨打备用', p.phone2]].forEach(([label, num]) => {
+      if (!num) return;
+      dialRow.appendChild(h('button', { class: 'btn sm ghost', style: 'width:auto;flex:1 1 auto',
+        onclick: () => { location.href = 'tel:' + String(num).replace(/[^\d+]/g, ''); } }, label + ' ' + num));
+    });
+    info.appendChild(dialRow);
+  }
   const editBtns = h('div', { class: 'btn-row' }, [
     h('button', { class: 'btn ghost', onclick: () => projectForm(p) }, '编辑'),
     h('button', { class: 'btn ghost', title: '复制基本信息/阶段/预算计划为新项目', onclick: () => {
@@ -2322,25 +4051,44 @@ async function projectDetailView(id) {
       location.hash = '#/compare';
     } }, '🆚 对比'),
     h('button', { class: 'btn danger', onclick: () => confirmDialog('删除该项目会一并删除其下所有记账与提醒，可在「设置 → 数据安全 → 回收站」30 天内整体还原。确定？', () => {
-      Projects.remove(p.id).then(() => { toast('已删除，可在回收站还原'); location.hash = '#/projects'; });
+      // 阶段 B4：项目删除会连带把它的收付款节点移入回收站 → 同步取消这些节点的通知
+      Projects.remove(p.id).then(() => { toast('已删除，可在回收站还原'); location.hash = '#/projects'; syncReminderNotifications(); });
     }, '删除') }, '删除')
   ]);
   info.appendChild(editBtns);
   wrap.appendChild(info);
 
-  // 施工阶段进度（可勾选完成 + 自主修改各阶段完成时间）
+  // —— 施工阶段：甘特图展示（v2.9.0）——
+  // 展示形式由逐行表单改为时间轴甘特图；勾选完成/日期编辑收进「编辑阶段」折叠区，
+  // 导出（横道图 / Excel / PNG / SVG）走 #/gantt/:id 页，与本图共用 gantt.js 同一套渲染，保证一致。
   const stageCard = h('div', { class: 'card' });
   const stages = p.stages || [];
   const doneN = stages.filter((s) => s.done).length;
   stageCard.appendChild(h('div', { class: 'row-between' }, [
     h('div', { style: 'font-weight:700' }, '施工阶段（' + doneN + '/' + stages.length + '）'),
-    h('button', { class: 'btn sm ghost', onclick: () => projectForm(p) }, '添加/改名')
+    h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end' }, [
+      h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/gantt/' + p.id; } }, '📊 施工进度（横屏）'),
+      h('button', { class: 'btn sm ghost', onclick: () => projectForm(p) }, '添加/改名')
+    ])
   ]));
   if (!stages.length) {
     stageCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:8px' }, '未设置阶段，点「添加/改名」或项目「编辑」添加'));
   } else {
+    // 甘特图：行高 28、每天约 10px；阶段多/工期长时横向滑动
+    const model = ganttModel(stages, p);
+    const tlW = Math.min(1600, Math.max(430, model.totalDays * 10));
+    const svg = ganttSVG(model, { withTable: false, rowH: 28, timelineWidth: tlW });
+    const gwrap = h('div', { class: 'gantt-scroll', title: '点击进入「施工进度」页（自动横屏、可导出）',
+      style: 'overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:8px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer',
+      onclick: () => { location.hash = '#/gantt/' + p.id; } }, svg);
+    gwrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);padding:5px 8px;border-top:1px dashed var(--border)' },
+      '← 左右滑动 →　点图进入「施工进度」页（自动横屏，可导出 Excel/PDF）'));
+    stageCard.appendChild(gwrap);
+
+    // 编辑列表（默认折叠）：保留原有的勾选完成 + 三个日期即改即存能力
     const stageAlertDays = Number(await Meta.get('stageAlertDays', 3)) || 3;
     const td = today();
+    const editor = h('div');
     stages.forEach((s) => {
       // 工期状态：未完成且有预计结束时间 → 逾期红 / 临近黄
       let warn = null;
@@ -2377,22 +4125,84 @@ async function projectDetailView(id) {
       // 第二行：预计开始 / 预计结束 / 实际完成（均可改，即改即存）
       const row2 = h('div', { style: 'display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap' });
       const mk = (label, key, width) => {
-        const wrap = h('div', { style: 'display:flex;gap:3px;align-items:center;flex:1;min-width:0' });
-        wrap.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-xs);flex:0 0 auto' }, label));
+        const wrap2 = h('div', { style: 'display:flex;gap:3px;align-items:center;flex:1;min-width:0' });
+        wrap2.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-xs);flex:0 0 auto' }, label));
         const inp = h('input', { type: 'date', value: s[key] || '', title: label, style: 'width:' + width + ';min-width:0;flex:1' });
         if (locked) inp.disabled = true;
-        inp.addEventListener('change', () => { s[key] = inp.value; Projects.save(p); });
-        wrap.appendChild(inp);
-        return wrap;
+        inp.addEventListener('change', () => { s[key] = inp.value; Projects.save(p).then(render); });
+        wrap2.appendChild(inp);
+        return wrap2;
       };
       row2.appendChild(mk('预计起', 'planStart', '96px'));
       row2.appendChild(mk('预计止', 'planEnd', '96px'));
       row2.appendChild(mk('实际完', 'date', '96px'));
       box.appendChild(row2);
-      stageCard.appendChild(box);
+      box.appendChild(stageExtraRow(p, s, stages, locked));
+      editor.appendChild(box);
     });
+    const editBtn = h('button', { class: 'btn sm ghost', style: 'margin-top:8px', onclick: () => {
+      const show = editor.style.display === 'none';
+      editor.style.display = show ? '' : 'none';
+      editBtn.textContent = show ? '收起阶段编辑' : '编辑阶段（勾选/日期）';
+    } }, '编辑阶段（勾选/日期）');
+    editor.style.display = 'none';
+    stageCard.appendChild(editBtn);
+    stageCard.appendChild(editor);
   }
   wrap.appendChild(stageCard);
+
+  // ---------- 合同文件（v2.11.0：PDF / JPG 上传，便于后续合同管理） ----------
+  const cCard = h('div', { class: 'card' });
+  const contracts = p.contracts || [];
+  cCard.appendChild(h('div', { class: 'row-between' }, [
+    h('div', { style: 'font-weight:700' }, '合同文件（' + contracts.length + '）'),
+    h('span', { class: 'muted', style: 'font-size:var(--g-fs-xs)' }, '支持 PDF / JPG')
+  ]));
+  if (!contracts.length) {
+    cCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:8px' },
+      '暂无合同。可上传合同扫描件或照片（PDF/JPG），后续随时调阅核对。'));
+  }
+  contracts.forEach((c) => {
+    cCard.appendChild(h('div', { class: 'tx' }, [
+      h('div', { style: 'min-width:0' }, [
+        h('div', { style: 'font-size:var(--g-fs-md);max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, c.name || '未命名合同'),
+        h('div', { class: 'meta' }, fmtDate(new Date(c.at || Date.now()).toISOString().slice(0, 10))
+          + ' · ' + Math.max(1, Math.round((Number(c.size) || 0) / 1024)) + 'KB'
+          + (String(c.type || c.name || '').toLowerCase().indexOf('pdf') >= 0 ? ' · PDF' : ''))
+      ]),
+      h('div', { style: 'display:flex;gap:6px;align-items:center' }, [
+        h('button', { class: 'btn sm ghost', onclick: () => viewBill(c, () => render()) }, '查看'),
+        locked ? null : h('button', { class: 'delete-x', title: '删除', onclick: () => confirmDialog('删除该合同文件？', () => {
+          Attachments.remove(c.attId);
+          p.contracts = (p.contracts || []).filter((x) => x.id !== c.id);
+          Projects.save(p).then(() => { toast('已删除合同'); render(); });
+        }, '删除') }, '×')
+      ])
+    ]));
+  });
+  if (!locked && contracts.length < 9) {
+    const addContract = async (res, fallbackName) => {
+      if (!res) return;
+      if (res.error) { toast('未能获取文件：' + res.error); return; }
+      const file = res.blob || res;
+      if (file.size > 10 * 1024 * 1024) { toast('文件过大（限 10MB）'); return; }
+      toast('正在保存合同…');
+      const attId = await Attachments.save(file, res.type || file.type);
+      p.contracts = p.contracts || [];
+      p.contracts.push({
+        id: uid(), attId, name: res.name || file.name || fallbackName,
+        size: file.size, type: res.type || file.type || '', at: Date.now()
+      });
+      await Projects.save(p);
+      toast('合同已保存'); render();
+    };
+    cCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, [
+      h('button', { class: 'btn sm primary', onclick: async () => addContract(await Bridge.files.pick('application/pdf,.pdf,image/*'), '合同文件') }, '📎 上传 PDF/图片'),
+      h('button', { class: 'btn sm ghost', onclick: async () => addContract(await Bridge.camera.image('camera'), '合同照片') }, '📷 拍照'),
+      h('button', { class: 'btn sm ghost', onclick: async () => addContract(await Bridge.camera.image('photos'), '合同照片') }, '🖼 相册')
+    ]));
+  }
+  wrap.appendChild(cCard);
 
   // 利润与回款看板（v2.1.0：新增毛利率、回款率）
   const st = await projStats(id);
@@ -2570,9 +4380,11 @@ async function projectDetailView(id) {
         h('div', { class: 'meta' }, fmtDate(r.dueDate) + (r.amount ? ' · ' + M(r.amount) : '') + (r.done ? ' · 已完成' : ''))
       ]),
       locked ? h('span') : h('div', { style: 'display:flex;gap:6px' }, [
-        h('button', { class: 'btn sm ghost', onclick: () => { r.done = !r.done; Reminders.save(r).then(render); } }, r.done ? '↺' : '✓'),
+        // 阶段 B4：节点勾选完成 → 同步撤销/重建它的原生预排程通知
+  h('button', { class: 'btn sm ghost', onclick: () => { r.done = !r.done; Reminders.save(r).then(() => { render(); syncReminderNotifications(); }); } }, r.done ? '↺' : '✓'),
         h('button', { class: 'edit-x', title: '编辑', onclick: (e) => { e.stopPropagation(); reminderForm(id, r); } }, '✎'),
-        h('button', { class: 'delete-x', onclick: () => { Reminders.remove(r.id).then(render); } }, '×')
+        // 阶段 B4：删除节点 → 同步取消它的原生预排程通知
+  h('button', { class: 'delete-x', onclick: () => { Reminders.remove(r.id).then(() => { render(); syncReminderNotifications(); }); } }, '×')
       ])
     ]));
   });
@@ -2650,6 +4462,53 @@ async function reconView() {
     h('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/parties'; } }, '⚙ 往来单位管理')
   ]));
   wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-2px 0 10px' }, '点击往来单位打开对账单：核对收付款明细、上传账单凭证、一键标记对账状态'));
+
+  // v2.11.0：对账维度切换 —— 往来单位与项目挂钩，既可按单位对账，也可按项目对账
+  state.reconMode = state.reconMode || 'party';
+  const modeSeg = h('div', { class: 'chips', style: 'margin-bottom:10px' });
+  [['party', '按往来单位'], ['project', '按项目']].forEach(([v, label]) => {
+    modeSeg.appendChild(h('button', { class: 'chip' + (state.reconMode === v ? ' on' : ''), onclick: () => { state.reconMode = v; render(); } }, label));
+  });
+  wrap.appendChild(modeSeg);
+
+  if (state.reconMode === 'project') {
+    wrap.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:-2px 0 10px' },
+      '点项目进入「项目对账」：只统计该项目下各往来单位的收付；再点某个单位，即只看该单位在该项目范围内的明细'));
+    const projRows = projects.map((pr) => {
+      const pt = txs.filter((t) => t.projectId === pr.id);
+      const agg = {};
+      pt.forEach((t) => {
+        if (!t.partyId) return;
+        const amt = Number(t.amount) || 0;
+        agg[t.partyId] = (agg[t.partyId] || 0) + (isIncome(t) ? -amt : amt);
+      });
+      let pay = 0, recv = 0, openN = 0;
+      Object.keys(agg).forEach((id) => {
+        const v = agg[id];
+        if (v > 0) pay += v; else recv += -v;
+        const pp = parties.find((x) => x.id === id);
+        if (pp && (pp.payStatus || 'unpaid') === 'unpaid') openN++;
+      });
+      return { pr: pr, n: Object.keys(agg).length, pay: pay, recv: recv, openN: openN, count: pt.length };
+    }).filter((x) => x.count > 0).sort((a, b) => (b.pay + b.recv) - (a.pay + a.recv));
+
+    if (!projRows.length) wrap.appendChild(emptyState('还没有挂到项目的往来流水', '记一笔时选择项目后即可在此按项目对账'));
+    projRows.forEach((x) => {
+      const card = h('div', { class: 'card party-clickable', onclick: () => openModal(x.pr.name + ' · 项目对账', projectRecon(x.pr, txs, projects, parties), () => render()) });
+      card.appendChild(h('div', { class: 'row-between' }, [
+        h('div', { style: 'min-width:0;flex:1' }, [
+          h('div', { style: 'font-weight:700;font-size:var(--g-fs-base);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, x.pr.name || '未命名项目'),
+          h('div', { class: 'sub', style: 'margin-top:2px' }, '往来单位 ' + x.n + ' 家 · ' + x.count + ' 笔 · 未结清 ' + x.openN + ' 家')
+        ]),
+        h('div', { style: 'text-align:right' }, [
+          h('div', { class: 'amt expense' }, '付 ' + M(x.pay)),
+          h('div', { class: 'amt income', style: 'margin-top:2px' }, '收 ' + M(x.recv))
+        ])
+      ]));
+      wrap.appendChild(card);
+    });
+    return wrap;
+  }
 
   // 付款状态筛选
   const chips = h('div', { class: 'chips', style: 'margin-bottom:10px' });
@@ -2748,6 +4607,16 @@ function reconCard(p, st, allTxs, allProjects) {
     h('div', { class: 'sub' }, '往来 ' + st.count + ' 笔 · 应付 ' + M(st.expenseTotal) + ' · 应收 ' + M(st.incomeTotal)),
     h('span', { class: 'muted', style: 'font-size:var(--g-fs-md);flex:0 0 auto' }, '对账单 ›')
   ]));
+  // v2.11.0：主号 / 备用号一键拨号（阻止冒泡，避免误开对账单）
+  if (p.phone || p.phone2) {
+    const dial = h('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' });
+    [[p.phone, '📞 ' + (p.phone || '')], [p.phone2, '📞 备用 ' + (p.phone2 || '')]].forEach(([num, label]) => {
+      if (!num) return;
+      dial.appendChild(h('button', { class: 'btn sm ghost', style: 'width:auto;flex:1 1 auto',
+        onclick: (e) => { e.stopPropagation(); location.href = 'tel:' + String(num).replace(/[^\d+]/g, ''); } }, label));
+    });
+    card.appendChild(dial);
+  }
   // v2.7.0（C2）：对账页也提供统一下钻出口——锁定该单位全部流水到流水页，提示条样式与统计下钻一致
   const ids = allTxs.filter((t) => t.partyId === p.id).map((t) => t.id);
   if (ids.length) {
@@ -2856,10 +4725,76 @@ function partyCard(p, st, allTxs, allProjects) {
 
 // 往来对账单：某单位全部流水 + 分类小计 + 一键标记付款状态
 // v2.5.0：opts.expandId 指定展开哪条流水详情；opts.scrollTop 用于重建后恢复阅读位置
+/**
+ * 项目对账（v2.11.0）：往来单位与项目挂钩后，按单个项目核对往来。
+ * 列出该项目下每个往来单位的收付净额与对账状态，点进去即只看该单位在本项目范围内的明细。
+ */
+function projectRecon(pr, allTxs, allProjects, allParties) {
+  const pt = allTxs.filter((t) => t.projectId === pr.id);
+  const agg = {};
+  pt.forEach((t) => {
+    if (!t.partyId) return;
+    const amt = Number(t.amount) || 0;
+    agg[t.partyId] = (agg[t.partyId] || 0) + (isIncome(t) ? -amt : amt);
+  });
+  let pay = 0, recv = 0;
+  const body = h('div');
+  const rows = Object.keys(agg).map((id) => {
+    const v = agg[id];
+    if (v > 0) pay += v; else recv += -v;
+    const pp = allParties.find((x) => x.id === id);
+    const cnt = pt.filter((t) => t.partyId === id).length;
+    return { p: pp, v: v, cnt: cnt };
+  }).sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
+
+  body.appendChild(h('div', { class: 'row-between', style: 'font-weight:700' }, [
+    h('span', { style: 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, pr.name || '未命名项目'),
+    h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, pt.length + ' 笔')
+  ]));
+  body.appendChild(h('div', { style: 'display:flex;gap:10px;margin-top:10px' }, [
+    h('div', { style: 'flex:1;background:rgba(224,101,79,.10);border-radius:10px;padding:8px;text-align:center' }, [
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '应付合计'),
+      h('div', { class: 'amt expense', style: 'font-size:16px' }, M(pay))
+    ]),
+    h('div', { style: 'flex:1;background:rgba(76,175,120,.10);border-radius:10px;padding:8px;text-align:center' }, [
+      h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, '应收合计'),
+      h('div', { class: 'amt income', style: 'font-size:16px' }, M(recv))
+    ])
+  ]));
+  body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '往来单位（' + rows.length + '）'));
+  if (!rows.length) {
+    body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md);margin-top:6px' },
+      '该项目还没有挂往来单位的流水。记一笔时同时选「项目」和「成员/商家/客户」即可在此对账'));
+    return body;
+  }
+  rows.forEach((x) => {
+    const status = PAY_STATUS[(x.p && x.p.payStatus) || 'unpaid'] || PAY_STATUS.unpaid;
+    body.appendChild(h('div', { class: 'tr-row', style: 'border-top:1px solid var(--border)', onclick: () => {
+      if (!x.p) return;
+      openModal(x.p.name + ' · 对账', partyStatement(x.p, allTxs, allProjects, { projectId: pr.id }), () => render());
+    } }, [
+      h('div', { style: 'flex:1;min-width:0' }, [
+        h('div', { style: 'font-weight:600;font-size:var(--g-fs-ctl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap' },
+          (x.p ? x.p.name : '（已删除的单位）')),
+        h('div', { class: 'meta' }, (x.p ? partyTypeLabel(x.p.type) : '—') + ' · ' + x.cnt + ' 笔 · ' + status.label)
+      ]),
+      h('div', { class: 'tr-r' }, [
+        h('div', { class: 'amt ' + (x.v > 0 ? 'expense' : 'income') }, (x.v > 0 ? '应付 ' : '应收 ') + M(Math.abs(x.v)))
+      ]),
+      h('span', { class: 'chev' }, '›')
+    ]));
+  });
+  body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:8px' },
+    '点任一单位 → 只看该单位在本项目范围内的明细与账单；「查看全部往来」可切回该单位的全项目对账。'));
+  return body;
+}
+
 function partyStatement(p, allTxs, allProjects, optsIn) {
   const opts = optsIn || {};
-  const rel = allTxs.filter((t) => t.partyId === p.id)
+  const relAll = allTxs.filter((t) => t.partyId === p.id)
     .slice().sort((a, b) => (fmtDate(b.date) + (b.time || '')).localeCompare(fmtDate(a.date) + (a.time || '')));
+  // v2.11.0：对账单可按项目收窄（往来单位与项目挂钩，支持每个项目独立对账）
+  const rel = opts.projectId ? relAll.filter((t) => t.projectId === opts.projectId) : relAll;
   const pname = (id) => { const x = allProjects.find((p2) => p2.id === id); return x ? x.name : '未关联项目'; };
   let pay = 0, rec = 0;
   const byCat = {}, byProj = {};
@@ -2869,13 +4804,25 @@ function partyStatement(p, allTxs, allProjects, optsIn) {
       pay += amt;
       const c = (t.category || '其他') + (t.subCat ? '·' + t.subCat : '');
       byCat[c] = (byCat[c] || 0) + amt;
-      byProj[t.projectId] = (byProj[t.projectId] || 0) + amt;
     } else if (isIncome(t)) {
       rec += amt;
-      byProj[t.projectId] = (byProj[t.projectId] || 0) - amt;
     }
   });
+  relAll.forEach((t) => {
+    const amt = Number(t.amount) || 0;
+    if (isExpense(t)) byProj[t.projectId] = (byProj[t.projectId] || 0) + amt;
+    else if (isIncome(t)) byProj[t.projectId] = (byProj[t.projectId] || 0) - amt;
+  });
   const body = h('div');
+  const reopenThis = () => openModal(p.name + ' · 对账', partyStatement(p, allTxs, allProjects, opts), () => render());
+  if (opts.projectId) {
+    const pr = allProjects.find((x) => x.id === opts.projectId);
+    body.appendChild(h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;padding:8px;background:var(--bg-soft);border-radius:10px' }, [
+      h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm);flex:1;min-width:0' },
+        '仅看项目：' + (pr ? pr.name : '未关联项目') + '（' + rel.length + ' 笔）'),
+      h('button', { class: 'btn sm ghost', onclick: () => openModal(p.name + ' · 对账', partyStatement(p, allTxs, allProjects, {}), () => render()) }, '查看全部往来')
+    ]));
+  }
   body.appendChild(h('div', { class: 'row-between', style: 'font-weight:700' }, [
     h('span', {}, p.name + '（' + partyTypeLabel(p.type) + '）'),
     h('span', { class: 'tag ' + ((PAY_STATUS[p.payStatus] || {}).cls || 'unpaid') }, (PAY_STATUS[p.payStatus] || {}).label || '未付')
@@ -2899,13 +4846,15 @@ function partyStatement(p, allTxs, allProjects, optsIn) {
     });
   }
   if (Object.keys(byProj).length) {
-    body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '按项目小计（收为负/付为正）'));
+    body.appendChild(h('div', { class: 'sub', style: 'margin-top:12px;font-weight:600' }, '按项目小计（收为负/付为正，点开即按该项目独立对账）'));
     Object.keys(byProj).forEach((pid) => {
       const v = byProj[pid];
-      body.appendChild(h('div', { class: 'row-between', style: 'margin-top:4px;font-size:var(--g-fs-md)' }, [
+      const row = h('div', { class: 'row-between', style: 'margin-top:4px;font-size:var(--g-fs-md);cursor:pointer',
+        onclick: () => openModal(p.name + ' · 对账', partyStatement(p, allTxs, allProjects, { projectId: pid }), () => render()) }, [
         h('span', { class: 'muted', style: 'max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, pname(pid)),
-        h('span', {}, (v >= 0 ? '付 ' : '收 ') + M(Math.abs(v)))
-      ]));
+        h('span', {}, (v >= 0 ? '付 ' : '收 ') + M(Math.abs(v)) + ' ›')
+      ]);
+      body.appendChild(row);
     });
   }
   // 账单凭证：上传送货单/收据/对账单（图片或 PDF），便于日后核对付款金额
@@ -2929,29 +4878,28 @@ function partyStatement(p, allTxs, allProjects, optsIn) {
     ]));
   });
   if (bills.length < 9) {
-    const mkInput = (accept, capture) => {
-      const inp = h('input', { type: 'file', accept, style: 'display:none' });
-      if (capture) inp.setAttribute('capture', 'environment');
-      inp.addEventListener('change', () => {
-        const file = inp.files && inp.files[0];
-        inp.value = '';
-        if (!file) return;
-        if (file.size > 10 * 1024 * 1024) { toast('文件过大（限 10MB）'); return; }
-        toast('正在保存账单…');
-        Attachments.save(file, file.type).then((attId) => {
-          p.bills = p.bills || [];
-          p.bills.push({ id: uid(), attId, name: file.name || '账单照片', size: file.size, type: file.type || '', at: Date.now() });
-          return Parties.save(p);
-        }).then(() => { toast('账单已保存'); partyStatement(p, allTxs, allProjects); });
-      });
-      return inp;
+    // 阶段 B：拍照/相册走 Bridge（原生用 Capacitor Camera），PDF 等走系统文件选择器。
+    // res 形态：{blob, type, name}（原生相机）或 File（网页选择器），这里统一兼容。
+    const addBill = (res, fallbackName) => {
+      if (!res) return;                                     // 用户取消
+      if (res.error) { toast('未能获取文件：' + res.error); return; }
+      const file = res.blob || res;
+      if (file.size > 10 * 1024 * 1024) { toast('文件过大（限 10MB）'); return; }
+      toast('正在保存账单…');
+      Attachments.save(file, res.type || file.type).then((attId) => {
+        p.bills = p.bills || [];
+        p.bills.push({
+          id: uid(), attId,
+          name: res.name || file.name || fallbackName,
+          size: file.size, type: res.type || file.type || '', at: Date.now()
+        });
+        return Parties.save(p);
+      }).then(() => { toast('账单已保存'); partyStatement(p, allTxs, allProjects); });
     };
-    const camInp = mkInput('image/*', true);
-    const fileInp = mkInput('image/*,application/pdf,.pdf', false);
-    body.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px' }, [
-      camInp, fileInp,
-      h('button', { class: 'btn sm primary', onclick: () => camInp.click() }, '📷 拍照上传'),
-      h('button', { class: 'btn sm ghost', onclick: () => fileInp.click() }, '📎 选择文件')
+    body.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' }, [
+      h('button', { class: 'btn sm primary', onclick: async () => addBill(await Bridge.camera.image('camera'), '账单照片') }, '📷 拍照上传'),
+      h('button', { class: 'btn sm ghost', onclick: async () => addBill(await Bridge.camera.image('photos'), '账单照片') }, '🖼 从相册选'),
+      h('button', { class: 'btn sm ghost', onclick: async () => addBill(await Bridge.files.pick('image/*,application/pdf,.pdf'), '账单文件') }, '📎 选择文件')
     ]));
   } else {
     body.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '账单已达 9 张上限，请先删除部分再上传'));
@@ -3017,29 +4965,17 @@ function partyStatement(p, allTxs, allProjects, optsIn) {
     L.push('如核对无误请回复确认，谢谢！');
     return L.join('\n');
   };
+  // 阶段 C：复制走 Bridge（原生用系统剪贴板），分享走系统 Sharesheet
   const copyStatement = async () => {
     const txt = buildStatementText();
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(txt);
-        toast('对账单已复制，可直接粘贴到微信');
-        return;
-      }
-    } catch (e) { /* 降级到 execCommand */ }
-    const ta = document.createElement('textarea');
-    ta.value = txt; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
-    document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); toast('对账单已复制'); }
-    catch (e2) { toast('复制失败，请长按选择文本'); }
-    ta.remove();
+    const ok = await Bridge.clipboard.write(txt);
+    toast(ok ? '对账单已复制，可直接粘贴到微信' : '复制失败，请长按选择文本');
   };
   const shareStatement = async () => {
     const txt = buildStatementText();
-    if (navigator.share) {
-      try { await navigator.share({ title: '往来对账单 · ' + (p.name || ''), text: txt }); return; }
-      catch (e) { if (e && e.name === 'AbortError') return; } // 用户取消分享
-    }
-    await copyStatement();
+    // share.text 返回 false 表示环境不支持分享 → 退化为复制到剪贴板
+    const ok = await Bridge.share.text({ title: '往来对账单 · ' + (p.name || ''), text: txt });
+    if (!ok) await copyStatement();
   };
 
   const acts = [
@@ -3121,7 +5057,7 @@ function txDetailPanel(t, ctx) {
     kv('款项类型', t.subType);
     kv('开票状态', t.invoiceStatus);
     kv('发票类型', t.invoiceType);
-    kv('税额', t.taxAmount ? M(t.taxAmount) : '');
+    kv('税额', t.taxAmount ? M(t.taxAmount) + (t.taxRate ? '（税率 ' + t.taxRate + '%' + (t.taxBase === 'contract' ? ' · 按合同额' : '') + '）' : '') : '');
   } else {
     kv('分类', [t.category, t.subCat].filter(Boolean).join('·'));
   }
@@ -3795,7 +5731,7 @@ function shareStatsImage(d) {
     ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
     let y = PAD;
     ctx.fillStyle = C.text; ctx.font = '700 40px sans-serif';
-    ctx.fillText('装修记账 · 统计报表', PAD, y + 40); y += 66;
+    ctx.fillText('工账 · 统计报表', PAD, y + 40); y += 66;
     ctx.fillStyle = C.dim; ctx.font = '26px sans-serif';
     ctx.fillText((d.rg.label || '') + ' · ' + (d.rg.sub || ''), PAD, y); y += 40;
     if (d.basisLabel) {
@@ -3885,15 +5821,15 @@ function shareStatsImage(d) {
     cv.toBlob((b) => {
       if (!b) { toast('长图生成失败'); return; }
       const file = new File([b], '统计报表.png', { type: 'image/png' });
-      if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
-        navigator.share({ files: [file], title: '统计报表' }).catch(() => {});
-      } else {
+      // 阶段 C：原生把图片写入缓存目录再走系统分享面板；不支持时回退为下载到本地
+      Bridge.share.file({ blob: b, file: file, name: '统计报表.png', title: '统计报表' }).then((ok) => {
+        if (ok) return;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(b); a.download = '统计报表_' + new Date().toISOString().slice(0, 10) + '.png';
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 4000);
         toast('已生成统计长图');
-      }
+      });
     }, 'image/png');
   } catch (e) { toast('长图生成失败：' + e.message); }
 }
@@ -4567,27 +6503,41 @@ async function settingsView() {
 
   const rCard = h('div', { class: 'card' });
 
-  // 系统通知权限
+  // 系统通知权限（阶段 B：统一走 Bridge；原生 = 本地通知，Web = Notification + SW）
   const permRow = h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' });
-  const permInfo = h('span', { class: 'muted', style: 'font-size:var(--g-fs-md);flex:1;min-width:0' }, '');
-  function renderPerm() {
-    if (typeof Notification === 'undefined') { permInfo.textContent = '此环境不支持系统通知（节点提醒仍会在首页列出）'; return; }
-    if (Notification.permission === 'granted') permInfo.textContent = '✅ 系统通知已开启';
-    else if (Notification.permission === 'denied') permInfo.textContent = '🚫 通知已被拒绝，请在浏览器/系统设置中允许本 App 通知';
-    else permInfo.textContent = '系统通知未开启（开启后收付款到期、超支会弹通知）';
+  const permInfo = h('span', { class: 'muted', style: 'font-size:var(--g-fs-md);flex:1;min-width:0' }, '检查中…');
+  const permBtns = h('div', { style: 'display:flex;gap:6px;flex:0 0 auto' });
+  async function renderPerm() {
+    const perm = await Bridge.notify.permission();
+    if (perm === 'unsupported') {
+      permInfo.textContent = '此环境不支持系统通知（节点提醒仍会在首页列出）';
+    } else if (perm === 'granted') {
+      // 原生是预排程，不打开 App 也会弹，这点必须说清楚
+      permInfo.textContent = '✅ 系统通知已开启' + (Bridge.isNative() ? '（到期自动提醒，无需打开 App）' : '');
+    } else if (perm === 'denied') {
+      permInfo.textContent = '🚫 通知已被拒绝。' + Bridge.notify.guidance();
+    } else {
+      permInfo.textContent = '系统通知未开启（开启后收付款到期、超支会弹通知）';
+    }
+    permBtns.innerHTML = '';
+    if (perm === 'default') {
+      permBtns.appendChild(h('button', { class: 'btn primary', onclick: async () => {
+        const r = await Bridge.notify.request();
+        toast(r === 'granted' ? '通知已开启，到期将自动提醒' : '未获得通知权限');
+        renderPerm();
+        if (r === 'granted') syncReminderNotifications();
+      } }, '开启通知'));
+    }
+    if (perm === 'granted') {
+      permBtns.appendChild(h('button', { class: 'btn ghost', onclick: async () => {
+        const ok = await Bridge.notify.show({ title: '🔔 测试通知', body: '通知通道正常，收付款到期与超支预警会在这里提醒', tag: 'test', pid: '' });
+        toast(ok ? '已发送测试通知' : '发送失败');
+      } }, '发送测试通知'));
+    }
   }
   renderPerm();
   permRow.appendChild(permInfo);
-  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-    permRow.appendChild(h('button', { class: 'btn primary', onclick: () => {
-      Notification.requestPermission().then(() => { renderPerm(); if (Notification.permission === 'granted') toast('通知已开启，到期将自动提醒'); });
-    } }, '开启通知'));
-  }
-  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    permRow.appendChild(h('button', { class: 'btn ghost', onclick: () => {
-      showNotif('🔔 测试通知', '通知通道正常，收付款到期与超支预警会在这里提醒', 'test', '').then((ok) => { toast(ok ? '已发送测试通知' : '发送失败'); });
-    } }, '发送测试通知'));
-  }
+  permRow.appendChild(permBtns);
   rCard.appendChild(permRow);
 
   // 通知开关
@@ -4620,7 +6570,8 @@ async function settingsView() {
       Meta.set('notifyEnabled', !!notifyOn),
       Meta.set('budgetAlertPct', Math.min(100, Math.max(1, Number(pctInp.value) || 80))),
       Meta.set('stageAlertDays', Math.max(0, Number(stageInp.value) || 0))
-    ]).then(() => toast('已保存提醒与预警设置'));
+      // 阶段 B4：提醒天数/开关变了 → 立即重排（否则用户改了还要等到下次启动才生效）
+    ]).then(() => { toast('已保存提醒与预警设置'); syncReminderNotifications(); });
   } }, '保存'));
   G.remind.appendChild(rCard);
 
@@ -4631,18 +6582,57 @@ async function settingsView() {
   const themeSeg = h('div', { class: 'seg' });
   const tPaper = h('button', { class: themeSaved !== 'dark' ? 'on' : '' }, '📒 暖纸账本');
   const tDark = h('button', { class: themeSaved === 'dark' ? 'on' : '' }, '🌙 墨绿夜读');
+  // 阶段 C3：切主题同时刷原生状态栏（applyTheme 内部会调 Bridge.statusBar.apply）
   tPaper.addEventListener('click', () => {
-    document.documentElement.dataset.theme = 'paper'; Meta.set('theme', 'paper');
+    applyTheme('paper'); Meta.set('theme', 'paper');
     tPaper.classList.add('on'); tDark.classList.remove('on');
   });
   tDark.addEventListener('click', () => {
-    document.documentElement.dataset.theme = 'dark'; Meta.set('theme', 'dark');
+    applyTheme('dark'); Meta.set('theme', 'dark');
     tDark.classList.add('on'); tPaper.classList.remove('on');
   });
   themeSeg.appendChild(tPaper); themeSeg.appendChild(tDark);
   themeCard.appendChild(themeSeg);
   themeCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:8px' }, '暖纸账本：米色纸面质感，支出以朱砂红标注；墨绿夜读适合夜间弱光。设置立即生效并自动记忆'));
   G.look.appendChild(themeCard);
+
+  // —— 显示与交互（P1-10 可访问性 + 施工进度页横屏策略）——
+  const dispCard = h('div', { class: 'card' });
+  dispCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '显示与交互'));
+
+  const fsSaved = await Meta.get('uiFontScale', 'std');
+  const fsSeg = h('div', { class: 'seg' });
+  [['std', '标准'], ['lg', '大'], ['xl', '超大']].forEach((pair) => {
+    const b = h('button', { class: fsSaved === pair[0] ? 'on' : '' }, pair[1]);
+    b.addEventListener('click', () => {
+      applyFontScale(pair[0]); Meta.set('uiFontScale', pair[0]);
+      Array.prototype.forEach.call(fsSeg.children, (c) => c.classList.remove('on'));
+      b.classList.add('on');
+      toast('字号已切换为「' + pair[1] + '」');
+    });
+    fsSeg.appendChild(b);
+  });
+  dispCard.appendChild(fsSeg);
+  dispCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' },
+    '只放大正文与数字；甘特图、横道图与导出的 Excel 排版不受影响'));
+
+  let autoLand = await Meta.get('ganttAutoLandscape', true);
+  const landRow = h('div', { class: 'row-between', style: 'margin-top:12px;gap:10px' });
+  landRow.appendChild(h('div', { style: 'flex:1;min-width:0' }, [
+    h('div', { style: 'font-weight:600;font-size:var(--g-fs-md)' }, '施工进度页自动横屏'),
+    h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:2px' },
+      '进入「施工进度」页时自动切横屏；页内仍可点「⛶」随时切回竖屏，退出页面自动恢复')
+  ]));
+  const landBtn = h('button', { class: 'btn sm ' + (autoLand !== false ? 'primary' : 'ghost'), style: 'flex:0 0 auto', onclick: () => {
+    autoLand = !(autoLand !== false);
+    Meta.set('ganttAutoLandscape', autoLand);
+    landBtn.className = 'btn sm ' + (autoLand ? 'primary' : 'ghost');
+    landBtn.textContent = autoLand ? '已开启' : '已关闭';
+    toast(autoLand ? '进入施工进度页将自动横屏' : '不再自动横屏，需手动旋转或点页内按钮');
+  } }, autoLand !== false ? '已开启' : '已关闭');
+  landRow.appendChild(landBtn);
+  dispCard.appendChild(landRow);
+  G.look.appendChild(dispCard);
 
   // 施工阶段模板：独立编辑卡已停用（与「进度计划模板→工装」是同一份数据 meta.stageTemplate，统一在工装 tab 维护，避免双入口 confusion）
   G.plan.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin:2px 2px 0' },
@@ -4703,6 +6693,23 @@ async function settingsView() {
     }
   } }, '保存模板'));
   G.plan.appendChild(planTplCard);
+
+  // —— 节假日（v2.11.0：剔除非工作日时跳过的日期）——
+  const holCard = h('div', { class: 'card' });
+  holCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '节假日（剔除非工作日时跳过）'));
+  holCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:4px' },
+    '内置 2026-2027 法定节假日参考值。这里填的日期与内置值取并集，一行一个，格式 YYYY-MM-DD。'));
+  const holTa = h('textarea', { class: 'ctl', rows: 4, placeholder: '2026-05-01\n2026-05-02', style: 'margin-top:8px' });
+  Meta.get('holidays', null).then((list) => { holTa.value = (Array.isArray(list) ? list : []).join('\n'); });
+  holCard.appendChild(holTa);
+  holCard.appendChild(h('button', { class: 'btn primary', style: 'margin-top:8px', onclick: () => {
+    const lines = String(holTa.value || '').split(/[\n,，\s]+/).map((s) => s.trim())
+      .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s));
+    Meta.set('holidays', lines).then(() => toast('已保存 ' + lines.length + ' 个节假日'));
+  } }, '保存节假日'));
+  holCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:6px' },
+    '新建项目勾选「剔除周末及法定节假日」后，竣工日期会跳过这些日子顺延；每年国务院安排微调时在此补充即可。'));
+  G.plan.appendChild(holCard);
 
   // 账户管理
   const accCard = h('div', { class: 'card' });
@@ -4949,7 +6956,8 @@ async function settingsView() {
         ]),
         h('div', { style: 'display:flex;gap:6px;flex:0 0 auto' }, [
           h('button', { class: 'btn sm primary', onclick: async () => {
-            try { const n = await Trash.restore(gk); toast('已还原 ' + n + ' 条记录'); render(); }
+            // 阶段 B4：还原可能带回节点 → 重新排程
+      try { const n = await Trash.restore(gk); toast('已还原 ' + n + ' 条记录'); render(); syncReminderNotifications(); }
             catch (e) { toast('还原失败：' + (e && e.message || e)); }
           } }, '还原'),
           h('button', { class: 'btn sm ghost', onclick: async () => { await Trash.removeGroup(gk); render(); } }, '彻底删除')
@@ -4995,49 +7003,21 @@ async function settingsView() {
   bkCard.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-md)' }, '备份与恢复（强烈建议定期备份：数据存在手机浏览器里，清缓存/换手机前务必导出）'));
   const bkMsg = h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px;color:var(--income)' });
   bkCard.appendChild(h('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, [
+    // 阶段 C4：原生把备份写进应用文档目录再唤起系统分享（可存到任意位置 / 发微信文件传输助手）；
+    // Web 形态 Bridge 内部回退为 a[download]。
     h('button', { class: 'btn primary', onclick: async () => {
       bkMsg.textContent = '正在打包数据…';
       try {
         const data = await exportAll();
-        const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = '装修记账备份_' + today() + '.json';
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-        bkMsg.textContent = '✅ 备份文件已生成，请通过浏览器下载/分享保存（可发微信文件传输助手留存）';
+        const name = '工账备份_' + today() + '.json';
+        const ok = await Bridge.files.saveAndShare(name, JSON.stringify(data));
+        bkMsg.textContent = ok
+          ? '✅ 已唤起保存/分享，请选择「微信文件传输助手」或存到手机，留一份才安心'
+          : '❌ 备份失败，请重试或改用「复制」方式留存';
       } catch (e) { bkMsg.textContent = '❌ 备份失败：' + (e && e.message || e); }
     } }, '⬇️ 导出备份'),
-    h('button', { class: 'btn ghost', onclick: () => bkFile.click() }, '⬆️ 导入恢复')
+    h('button', { class: 'btn ghost', onclick: () => importBackupFlow() }, '⬆️ 导入恢复')
   ]));
-  const bkFile = h('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
-  bkFile.addEventListener('change', (e) => {
-    const fl = e.target.files[0];
-    if (!fl) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      let data = null;
-      try { data = JSON.parse(String(reader.result)); } catch (err) { toast('文件不是有效的备份'); return; }
-      if (!data || !data.stores) { toast('文件不是本应用的备份'); return; }
-      const n = (data.stores.transactions || []).length;
-      confirmDialog('导入将【清空并覆盖】当前所有数据，用备份里的 ' + n + ' 笔记账替换。导入前会自动存一份当前数据快照，可在「数据安全」里一键回滚。确定继续？', async () => {
-        try {
-          // v2.0.0：导入前强制留快照，防止坏备份导致数据无法挽回
-          try { await Snapshots.save('pre-import'); } catch (se) { /* 快照失败不阻断导入 */ }
-          const r = await importAll(data);
-          if (r && r.failed > 0) {
-            toast('已恢复 ' + r.imported + ' 条，其中 ' + r.failed + ' 条失败（可在「数据安全」里回滚到导入前快照）');
-          } else {
-            toast('恢复成功，共 ' + (r ? r.imported : n) + ' 条，即将刷新');
-          }
-          setTimeout(() => location.reload(), 900);
-        } catch (err) { toast('恢复失败：' + (err && err.message || err)); }
-      }, '覆盖导入');
-    };
-    reader.readAsText(fl, 'utf-8');
-    e.target.value = '';
-  });
-  bkCard.appendChild(bkFile);
   bkCard.appendChild(bkMsg);
   G.data.appendChild(bkCard);
 
@@ -5046,7 +7026,7 @@ async function settingsView() {
 
   wrap.appendChild(h('h2', { class: 'section', style: 'margin-top:18px' }, '关于'));
   wrap.appendChild(h('div', { class: 'card muted', style: 'font-size:var(--g-fs-md);line-height:1.7' },
-    '装修记账 · 本地版（PWA）。所有数据仅保存在本机浏览器，不上传任何服务器。可在安卓 Chrome 中“添加到主屏幕”当作 App 使用。当前为 P1：项目管理、记账（含照片/开票/更细维度）、往来单位、首页看板。'));
+    '工账 · 本地版。所有数据仅保存在本机，不上传任何服务器。网页版可在安卓 Chrome「添加到主屏幕」当 App 使用，也可打包为安卓原生 App。功能含：项目与施工阶段、记账（凭证/开票/多维度）、往来对账、统计报表、资金预测、数据安全备份。'));
   return wrap;
 }
 
@@ -5065,12 +7045,67 @@ function projectForm(existing) {
     });
   }
   const name = field(f, '项目名称', h('input', { value: p.name || '', placeholder: '如：张三家客厅翻新' }));
+
+  /* ---- 项目类型：家装 / 工装（两类字段不同，工装保持独立） ---- */
+  let projType = p.projType || (p.houseKind === 'fitup' ? 'fitup' : 'home');
+  let houseKind = (p.houseKind && p.houseKind !== 'fitup') ? p.houseKind : 'flat';
+  let skipRest = p.skipRest !== false;      // 默认剔除周末及法定节假日
+  let holidays = {};
+  getHolidays().then((hs) => { holidays = hs; updateKindHint(); if (!isEdit) recalcEnd(true); });
+
+  const typeWrap = h('div', { class: 'field' }, [h('label', {}, '项目类型')]);
+  const typeSeg = h('div', { class: 'seg' });
+  [['home', '🏠 家装项目'], ['fitup', '🏢 工装项目']].forEach(([v, label]) => {
+    const b = h('button', { class: projType === v ? 'on' : '', onclick: () => {
+      projType = v;
+      typeSeg.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on');
+      syncTypeUI(); recalcEnd(!isEdit);
+    } }, label);
+    typeSeg.appendChild(b);
+  });
+  typeWrap.appendChild(typeSeg);
+  f.appendChild(typeWrap);
+
+  // 家装：户型决定合同工期（平层 75 / 跃层 90 / 别墅 130 工作日）
+  const homeBox = h('div');
+  const kindWrap = h('div', { class: 'field' }, [h('label', {}, '户型（决定合同工期）')]);
+  const kindSeg = h('div', { class: 'seg' });
+  HOUSE_KINDS.forEach((k) => {
+    const b = h('button', { class: houseKind === k.id ? 'on' : '', onclick: () => {
+      houseKind = k.id;
+      kindSeg.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on'); updateKindHint(); recalcEnd(!isEdit);
+    } }, k.label);
+    kindSeg.appendChild(b);
+  });
+  kindWrap.appendChild(kindSeg);
+  const kindHint = h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '');
+  kindWrap.appendChild(kindHint);
+  homeBox.appendChild(kindWrap);
+  f.appendChild(homeBox);
+
+  // 工装：周期由用户自填
+  const fitupBox = h('div');
+  const fitupDays = field(fitupBox, '工期（工作日，自行填写）',
+    h('input', { value: p.workdays || '', type: 'number', min: '1', inputmode: 'numeric', placeholder: '如：120' }));
+  fitupDays.addEventListener('input', () => recalcEnd(!isEdit));
+  fitupBox.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:-2px' },
+    '工装不预设工期，按实际合同周期填写'));
+  f.appendChild(fitupBox);
+
   const clientName = field(f, '客户姓名', h('input', { value: p.clientName || '' }));
-  const phone = field(f, '电话', h('input', { value: p.phone || '', type: 'tel' }));
+  const phone = field(f, '电话（11 位）',
+    h('input', { value: p.phone || '', type: 'tel', inputmode: 'numeric', maxlength: '11', placeholder: '11 位手机号' }));
+  const phone2 = field(f, '备用号码（选填）',
+    h('input', { value: p.phone2 || '', type: 'tel', inputmode: 'numeric', maxlength: '11', placeholder: '备用联系人电话' }));
   const address = field(f, '房屋地址', h('input', { value: p.address || '' }));
-  const houseType = field(f, '户型', h('input', { value: p.houseType || '', placeholder: '如：三室两厅' }));
-  const buildArea = field(f, '建筑面积（㎡）', h('input', { value: p.buildArea || '', type: 'number', inputmode: 'decimal' }));
-  const constructArea = field(f, '施工面积（㎡）', h('input', { value: p.constructArea || '', type: 'number', inputmode: 'decimal' }));
+  const houseType = field(f, '户型结构', h('input', { value: p.houseType || '', placeholder: '如：三室两厅' }));
+  const buildAreaWrap = h('div');
+  const buildArea = field(buildAreaWrap, '建筑面积（㎡）', h('input', { value: p.buildArea || '', type: 'number', inputmode: 'decimal' }));
+  const constructArea = field(buildAreaWrap, '施工面积（㎡）', h('input', { value: p.constructArea || '', type: 'number', inputmode: 'decimal' }));
+  f.appendChild(buildAreaWrap);
+
   // 施工经理/设计师：与「往来单位」联动，下拉选择对应类型人员；编辑时旧值不在列表中则保留为额外选项，避免丢数据
   function personField(labelText, types, current) {
     const sel = h('select');
@@ -5089,8 +7124,57 @@ function projectForm(existing) {
   const designer = personField('设计师（从往来单位选择）', ['designer'], p.designer || '');
   const contract = field(f, '合同金额（元）', h('input', { value: p.contractAmount || '', type: 'number', inputmode: 'decimal' }));
   const budget = field(f, '成本预算（元，留空=按合同额）', h('input', { value: p.costBudget || '', type: 'number', inputmode: 'decimal' }));
+
   const startD = field(f, '开工日期', h('input', { value: fmtDate(p.startDate) || today(), type: 'date' }));
   const endD = field(f, '预计竣工', h('input', { value: fmtDate(p.endDate) || '', type: 'date' }));
+
+  // —— 竣工日期：开工 + N 个工作日（可剔除周末与节假日）——
+  function workdaysOf() {
+    if (projType === 'fitup') return Number(fitupDays.value) || 0;
+    return HOUSE_WORKDAYS[houseKind] || 0;
+  }
+  function updateKindHint() {
+    const n = workdaysOf();
+    kindHint.textContent = projType === 'home'
+      ? ((HOUSE_KINDS.find((k) => k.id === houseKind) || {}).label || '') + ' · 合同工期 ' + n + ' 个工作日'
+        + (skipRest ? '（剔除周末及节假日后顺延）' : '（按自然日计）')
+      : '';
+  }
+  function recalcEnd(force) {
+    const n = workdaysOf();
+    updateKindHint();
+    if (!startD.value || n <= 0) { endHint.textContent = '填写开工日期与工期后自动推算竣工日期'; return; }
+    const e = addWorkdays(startD.value, n, holidays, skipRest);
+    if (force || !isEdit) endD.value = e;
+    const spanDays = daysDiff(e, startD.value) + 1;
+    endHint.textContent = '竣工 ' + e + '（' + n + ' 个工作日 · 跨 ' + spanDays + ' 个自然日'
+      + (skipRest ? ' · 已剔除周末及节假日' : '') + '）；可手动修改';
+  }
+  const dateTools = h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px' });
+  const skipWrap = h('label', { style: 'display:flex;gap:6px;align-items:center;font-size:var(--g-fs-md)' });
+  const skipCb = h('input', { type: 'checkbox', style: 'width:16px;height:16px' });
+  skipCb.checked = skipRest;
+  skipCb.addEventListener('change', () => { skipRest = skipCb.checked; recalcEnd(!isEdit); });
+  skipWrap.appendChild(skipCb);
+  skipWrap.appendChild(document.createTextNode('剔除周末及法定节假日'));
+  dateTools.appendChild(skipWrap);
+  dateTools.appendChild(h('button', { class: 'btn sm ghost', onclick: () => recalcEnd(true) }, '按工作日重算'));
+  f.appendChild(dateTools);
+  const endHint = h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' }, '');
+  f.appendChild(endHint);
+  startD.addEventListener('change', () => recalcEnd(!isEdit));
+
+  function syncTypeUI() {
+    const isHome = projType === 'home';
+    homeBox.style.display = isHome ? '' : 'none';
+    fitupBox.style.display = isHome ? 'none' : '';
+    houseType.parentNode.style.display = isHome ? '' : 'none';   // 户型结构
+    buildAreaWrap.style.display = isHome ? '' : 'none';          // 建筑面积/施工面积
+    address.parentNode.firstChild && (address.parentNode.querySelector('label').textContent = isHome ? '房屋地址' : '工程地址');
+    updateKindHint();
+  }
+  syncTypeUI();
+  updateKindHint();
 
   const statusWrap = h('div', { class: 'field' }, [h('label', {}, '状态')]);
   const seg = h('div', { class: 'seg' });
@@ -5168,24 +7252,22 @@ function projectForm(existing) {
     pendingApply = () => {
       const build = (list) => {
         const base = startD.value;
-        let cursor = base ? new Date(base + 'T00:00:00') : null;
+        const wd = workdaysOf();
+        // 按合同工期（工作日）比例排期：首阶段落在开工日、末阶段收在竣工日，
+        // 甘特图时间区间因此自动等于 [开工, 竣工]（模板原始天数只作占比用）
+        const rows = scheduleStages(list, base, wd, holidays, skipRest);
         stages.length = 0;
-        list.forEach((it) => {
-          const s = { id: uid(), name: it.name || '', done: false, date: '', planStart: '', planEnd: '' };
-          const days = Number(it.days) || 0;
-          if (cursor && days > 0) {
-            s.planStart = ymd(cursor);
-            const end = new Date(cursor); end.setDate(end.getDate() + days - 1);
-            s.planEnd = ymd(end);
-            cursor = new Date(end); cursor.setDate(cursor.getDate() + 1);
-          }
-          stages.push(s);
-        });
+        rows.forEach((r) => stages.push({
+          id: uid(), name: r.name, done: false, date: '', planStart: r.planStart, planEnd: r.planEnd
+        }));
         renderStages();
         if (!base) toast('未填开工日期，已只载入阶段名；填好开工日期后重新载入即可自动排期');
+        else if (wd <= 0) toast('已载入阶段名；填写工期（工作日）后重新载入即可自动排期');
+        else toast('已按 ' + wd + ' 个工作日排期：' + base + ' → ' + (endD.value || '竣工日'));
       };
       if (id === 'fitup') {
-        getStageTpl().then((tpl) => build(tpl.map((t) => ({ name: t.name || '', days: 0 }))));
+        // 工装模板只有阶段名：给每项 1 份权重，按用户自填工期均分
+        getStageTpl().then((tpl) => build(tpl.map((t) => ({ name: t.name || '', days: 1 }))));
       } else {
         getPlanTemplates().then((t) => build(t[id] || []));
       }
@@ -5196,8 +7278,42 @@ function projectForm(existing) {
   tplYes.addEventListener('click', () => { tplConfirm.style.display = 'none'; if (pendingApply) { const f = pendingApply; pendingApply = null; f(); } });
   tplNo.addEventListener('click', () => { tplConfirm.style.display = 'none'; pendingApply = null; });
   stageBtns.appendChild(tplSel);
+
+  // 标准模板表格下载（按当前类型给一份可参照的 CSV）+ 用户自上传表格导入
+  const stageFile = h('input', { type: 'file', accept: '.csv,text/csv', style: 'display:none' });
+  stageFile.addEventListener('change', (e) => {
+    const fl = e.target.files && e.target.files[0];
+    stageFile.value = '';
+    if (!fl) return;
+    readFileAsText(fl).then((txt) => {
+      const rows = parseCsv(String(txt)).map((r) => ({ name: (r[0] || '').trim(), days: Number(String(r[1] || '').replace(/[^0-9.]/g, '')) || 0 }));
+      const ok = rows.filter((r) => r.name);
+      if (!ok.length) { toast('表格里没有识别到阶段，请按「阶段名称,工期天数」两列填写'); return; }
+      const wd = workdaysOf();
+      const base = startD.value;
+      const sch = scheduleStages(ok, base, wd, holidays, skipRest);
+      stages.length = 0;
+      sch.forEach((r) => stages.push({ id: uid(), name: r.name, done: false, date: '', planStart: r.planStart, planEnd: r.planEnd }));
+      renderStages();
+      toast('已导入 ' + ok.length + ' 个阶段' + (base && wd > 0 ? '，并按 ' + wd + ' 个工作日排期' : '（先填开工日期与工期再点模板可自动排期）'));
+    }).catch(() => toast('读取表格失败，请用 CSV 格式'));
+  });
+  stageBtns.appendChild(stageFile);
+  stageBtns.appendChild(h('button', { class: 'btn sm ghost', onclick: () => stageFile.click() }, '⬆ 上传表格'));
+  stageBtns.appendChild(h('button', { class: 'btn sm ghost', title: '下载一份标准阶段表，可参照填写后上传', onclick: () => {
+    const wantId = projType === 'fitup' ? 'fitup' : houseKind;
+    const doDownload = (rows, label) => downloadStagePlanCsv('施工阶段标准模板_' + label + '.csv', rows);
+    if (wantId === 'fitup') {
+      getStageTpl().then((tpl) => doDownload(tpl.map((t) => ({ name: t.name, days: 1 })), '工装'));
+    } else {
+      getPlanTemplates().then((t) => doDownload(t[wantId] || [], (HOUSE_KINDS.find((k) => k.id === wantId) || {}).label || '通用'));
+    }
+  } }, '⬇ 标准模板'));
+
   stageBox.appendChild(tplConfirm);
   stageBox.appendChild(stageBtns);
+  stageBox.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm);margin-top:6px' },
+    '阶段表格式：两列 CSV ——「阶段名称,工期天数」。上传后按合同工期比例自动排期，开工仪式落在开工日、软装窗帘进场安装收在竣工日。'));
   f.appendChild(stageBox);
 
   // 预算内计划付款类别（统一分类树：类别与「设置-分类层级」同一数据，下拉按「一级＞二级」展示）
@@ -5248,8 +7364,18 @@ function projectForm(existing) {
 
   const save = h('button', { class: 'btn primary', onclick: () => {
     p.name = name.value.trim();
+    if (!p.name) { toast('请填项目名称'); return; }
+    // 电话：11 位数字校验（留空允许；备用号码同样规则）
+    const ph = phone.value.trim(), ph2 = phone2.value.trim();
+    if (ph && !/^\d{11}$/.test(ph)) { toast('电话需为 11 位数字，当前 ' + ph.length + ' 位'); return; }
+    if (ph2 && !/^\d{11}$/.test(ph2)) { toast('备用号码需为 11 位数字，当前 ' + ph2.length + ' 位'); return; }
     p.clientName = clientName.value.trim();
-    p.phone = phone.value.trim();
+    p.phone = ph;
+    p.phone2 = ph2;
+    p.projType = projType;
+    p.houseKind = projType === 'fitup' ? 'fitup' : houseKind;
+    p.skipRest = skipRest;
+    p.workdays = workdaysOf();
     p.address = address.value.trim();
     p.houseType = houseType.value.trim();
     p.buildArea = Number(buildArea.value) || 0;
@@ -5276,9 +7402,36 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
   const srcTx = existingTx || null;
   const isEdit = !!srcTx && !srcTx.__copy;
   let type = presetType || (srcTx && srcTx.type) || (preset && preset.type) || 'expense';
-  const [projects, parties, accounts, catTree] = await Promise.all([
-    Projects.all(), Parties.all(), getAccounts(), getCatTree()
+  const [projects, parties, accounts, catTree, trades, materials] = await Promise.all([
+    Projects.all(), Parties.all(), getAccounts(), getCatTree(), getTrades(), getMaterials()
   ]);
+
+  /* —— 各下拉的「＋」：新增后写库并回填选中，弹窗不关闭（新增后即返回原界面）—— */
+  async function quickParty(name, type, phone) {
+    const np = { id: uid(), name: name, type: type, phone: phone || '', payStatus: 'unpaid', note: '' };
+    await Parties.save(np); parties.push(np); return np;
+  }
+  async function quickAccount(name) {
+    const a = { id: uid(), name: name, opening: 0, note: '' };
+    accounts.push(a); await Meta.set('accounts', accounts); return a;
+  }
+  async function quickCat(pName, sName) {
+    let c = catTree.find((x) => x.name === pName);
+    if (!c) { c = { id: uid(), name: pName, subs: [] }; catTree.push(c); }
+    if (sName && !(c.subs || []).some((s) => s.name === sName)) {
+      c.subs = c.subs || []; c.subs.push({ id: uid(), name: sName });
+    }
+    await Meta.set('catTree', catTree); return c;
+  }
+  async function quickTrade(name) {
+    if (trades.indexOf(name) < 0) { trades.push(name); await Meta.set('trades', trades); }
+    return name;
+  }
+  async function quickMaterial(name) {
+    if (materials.indexOf(name) < 0) { materials.push(name); await Meta.set('materials', materials); }
+    return name;
+  }
+  const opt = (v, l) => h('option', { value: v }, l);
 
   const f = h('div');
   const seg = h('div', { class: 'seg', style: 'margin-bottom:14px' });
@@ -5313,18 +7466,27 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
 
   // ---- 金额大字 + 拍照 ----
   const amount = h('input', { class: 'amt-input', type: 'number', inputmode: 'decimal', placeholder: '0.00' });
-  const fileInp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
   const thumb = h('img', { class: 'thumb', style: 'display:none;margin-top:6px' });
   let photoFile = null;
   let keepAttachId = isEdit ? (srcTx.attachmentId || null) : null;
-  fileInp.addEventListener('change', (e) => {
-    const fl = e.target.files[0];
-    if (fl) { photoFile = fl; thumb.src = URL.createObjectURL(fl); thumb.style.display = 'block'; keepAttachId = null; }
-  });
-  const camBtn = h('button', { class: 'cam-btn', onclick: () => fileInp.click() }, '📷 拍照');
+  // 阶段 B：拍照/相册统一走 Bridge —— 原生调 Capacitor Camera（有正规权限弹窗、成像更稳），
+  // Web 形态回落为 <input type=file capture>，两种形态对上层都是「拿到一个 Blob」。
+  const pickPhoto = async (source) => {
+    const res = await Bridge.camera.image(source);
+    if (!res) return;                 // 用户取消
+    // 设备无摄像头（部分模拟器）/ 权限被拒 → 明确提示，别让用户以为按钮失灵
+    if (res.error) { toast('未能获取照片：' + res.error + '，请改用「相册」选图'); return; }
+    if (res.blob.size > 10 * 1024 * 1024) { toast('图片过大（限 10MB）'); return; }
+    photoFile = res.blob;
+    thumb.src = URL.createObjectURL(res.blob);
+    thumb.style.display = 'block';
+    keepAttachId = null;              // 换图即丢弃旧附件引用
+  };
+  const camBtn = h('button', { class: 'cam-btn', onclick: () => pickPhoto('camera') }, '📷 拍照');
+  const albumBtn = h('button', { class: 'cam-btn', onclick: () => pickPhoto('photos') }, '🖼 相册');
   f.appendChild(h('div', { class: 'amount-box' }, [
     h('div', { class: 'amount-wrap' }, [h('span', { class: 'amt-cur' }, '¥'), amount]),
-    h('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:6px' }, [camBtn, fileInp, thumb])
+    h('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:6px' }, [camBtn, albumBtn, thumb])
   ]));
 
   // ---- 字段行区 ----
@@ -5333,6 +7495,7 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
 
   let projSel, catSel, subSel, acctSel, memberSel, merchSel, dtSel, noteSel;
   let subTypeSel, invSel, invTypeSel, taxSel, fromSel, toSel, planSel, regionSel, tradeSel, matSel, newPartySel;
+  let taxRateInp = null, taxBaseSel = null;   // v2.11.0：税率（%）与计税基数（收入侧）
   let actBox = null;
 
   function sel(options, value) {
@@ -5340,14 +7503,71 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
     if (value != null) s.value = value;
     return s;
   }
-  function row(icon, label, ctrl, onClear, extra) {
+  /**
+   * 字段行。onAdd(panel, close) 存在时行尾出现「＋」，点开在该行下方展开内联新增区
+   * ——不用 openModal：它会整体替换弹窗，导致已填写的这笔账全部丢失。
+   */
+  function row(icon, label, ctrl, onClear, extra, onAdd) {
     const right = h('div', { class: 'frow-r' }, [ctrl]);
     if (extra) right.appendChild(extra);
     if (onClear) right.appendChild(h('button', { class: 'frow-x', title: '清除', onclick: onClear }, '×'));
-    return h('div', { class: 'frow' }, [
+    const line = h('div', { class: 'frow' }, [
       h('div', { class: 'frow-l' }, [h('span', { class: 'frow-ic' }, icon), h('span', { class: 'frow-k' }, label)]),
       right
     ]);
+    if (!onAdd) return line;
+    const wrap = h('div', { class: 'frow-wrap' });
+    const panel = h('div', { class: 'inline-add', style: 'display:none' });
+    const addBtn = h('button', { class: 'frow-add', title: '新增', onclick: () => {
+      const open = panel.style.display === 'none';
+      if (open) { panel.innerHTML = ''; onAdd(panel, () => { panel.style.display = 'none'; }); panel.style.display = 'block'; }
+      else panel.style.display = 'none';
+      addBtn.textContent = open ? '×' : '＋';
+    } }, '＋');
+    right.appendChild(addBtn);
+    wrap.appendChild(line);
+    wrap.appendChild(panel);
+    return wrap;
+  }
+
+  /** 内联新增区的通用构造：items=[{key,label,placeholder,type,options}]；onSave(vals, close) 返回 Promise 或空 */
+  function addForm(panel, title, items, onSave) {
+    const box = h('div', { style: 'display:flex;flex-direction:column;gap:6px;padding:8px;background:var(--bg-soft);border-radius:10px;margin-top:6px' });
+    box.appendChild(h('div', { class: 'muted', style: 'font-size:var(--g-fs-sm)' }, title));
+    const inputs = {};
+    items.forEach((it) => {
+      const line = h('div', { style: 'display:flex;gap:6px;align-items:center' });
+      let node;
+      if (it.options) {
+        node = h('select', { class: 'ctl', style: 'flex:1;min-width:0' });
+        it.options.forEach((o) => node.appendChild(h('option', { value: o.v }, o.label)));
+        if (it.value != null) node.value = it.value;
+      } else {
+        node = h('input', { class: 'ctl', style: 'flex:1;min-width:0', type: it.type || 'text', placeholder: it.placeholder || '' });
+        if (it.value != null) node.value = it.value;
+      }
+      inputs[it.key] = node;
+      line.appendChild(h('span', { class: 'muted', style: 'font-size:var(--g-fs-sm);flex:0 0 auto;min-width:56px' }, it.label));
+      line.appendChild(node);
+      box.appendChild(line);
+    });
+    const btns = h('div', { style: 'display:flex;gap:6px;margin-top:2px' });
+    const ok = h('button', { class: 'btn sm primary', style: 'flex:1' }, '保存并选用');
+    const no = h('button', { class: 'btn sm ghost', style: 'flex:1' }, '取消');
+    btns.appendChild(ok); btns.appendChild(no);
+    box.appendChild(btns);
+    panel.appendChild(box);
+    no.addEventListener('click', () => { panel.style.display = 'none'; panel.previousSibling && null; const b = panel.parentNode.querySelector('.frow-add'); if (b) b.textContent = '＋'; });
+    ok.addEventListener('click', () => {
+      const vals = {};
+      Object.keys(inputs).forEach((k) => { vals[k] = inputs[k].value; });
+      Promise.resolve(onSave(vals)).then((done) => {
+        if (done === false) return;               // 校验不通过，保持展开
+        panel.style.display = 'none';
+        const b = panel.parentNode.querySelector('.frow-add'); if (b) b.textContent = '＋';
+      });
+    });
+    return inputs;
   }
   function accOptions() {
     return [h('option', { value: '' }, '未选账户')].concat(accounts.map((a) => h('option', { value: a.name }, a.name)));
@@ -5362,8 +7582,9 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
     return d + 'T' + tm;
   }
   function micBtn(target) {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return h('button', { class: 'mic-btn', title: '语音输入', onclick: () => toast('当前浏览器不支持语音输入') }, '🎤');
+    // 阶段 B：语音能力探测收敛到 Bridge（P3，原生插件未接入时自动隐藏入口）
+    const SR = Bridge.speech.supported() ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+    if (!SR) return h('button', { class: 'mic-btn', title: '语音输入', onclick: () => toast('当前环境不支持语音输入') }, '🎤');
     const b = h('button', { class: 'mic-btn', title: '语音输入', onclick: () => {
       try {
         const rec = new SR();
@@ -5417,16 +7638,66 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
       rows.appendChild(row('📌', '款项类型', subTypeSel));
       const clients = parties.filter((p) => p.type === 'client');
       memberSel = sel(partyOptions(clients, '选择客户'), srcTx ? (srcTx.partyId || '') : ((preset && preset.memberId) || ''));
-      rows.appendChild(row('👤', '客户', memberSel, () => { memberSel.value = ''; }));
+      rows.appendChild(row('👤', '客户', memberSel, () => { memberSel.value = ''; }, null, (panel, close) => {
+        addForm(panel, '新增客户（保存后自动选用，不用退出本界面）', [
+          { key: 'name', label: '名称', placeholder: '如：张三' },
+          { key: 'phone', label: '电话', placeholder: '11 位手机号（选填）', type: 'tel' }
+        ], async (v) => {
+          if (!v.name.trim()) { toast('请填名称'); return false; }
+          if (v.phone.trim() && !/^\d{11}$/.test(v.phone.trim())) { toast('电话需为 11 位数字'); return false; }
+          const np = await quickParty(v.name.trim(), 'client', v.phone.trim());
+          memberSel.appendChild(opt(np.id, np.name)); memberSel.value = np.id;
+          toast('已新增客户「' + np.name + '」'); close();
+        });
+      }));
       acctSel = sel(accOptions(), srcTx ? (srcTx.account || srcTx.method || '') : ((preset && preset.account) || ''));
-      rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }));
+      rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }, null, (panel, close) => {
+        addForm(panel, '新增账户（保存后自动选用）', [
+          { key: 'name', label: '名称', placeholder: '如：工行储蓄卡' }
+        ], async (v) => {
+          if (!v.name.trim()) { toast('请填账户名称'); return false; }
+          const a = await quickAccount(v.name.trim());
+          acctSel.appendChild(opt(a.name, a.name)); acctSel.value = a.name;
+          toast('已新增账户「' + a.name + '」'); close();
+        });
+      }));
       invSel = sel([h('option', {}, '未开'), h('option', {}, '已开')], srcTx ? (srcTx.invoiceStatus || '未开') : '未开');
       rows.appendChild(row('🧾', '开票状态', invSel));
       invTypeSel = sel([h('option', {}, '普票'), h('option', {}, '专票'), h('option', {}, '—')], srcTx ? (srcTx.invoiceType || '普票') : '普票');
       rows.appendChild(row('📄', '发票类型', invTypeSel));
-      taxSel = h('input', { class: 'ctl', type: 'number', inputmode: 'decimal', placeholder: '选填' });
+
+      // v2.11.0：改填税率（%），税额按基数自动算出；基数可选「收款金额」或「项目合同金额」
+      taxBaseSel = sel([opt('amount', '按收款金额'), opt('contract', '按合同金额')], (srcTx && srcTx.taxBase) || 'amount');
+      taxRateInp = h('input', { class: 'ctl', type: 'number', inputmode: 'decimal', placeholder: '如 3' });
+      taxRateInp.value = (srcTx && srcTx.taxRate != null && srcTx.taxRate !== '') ? srcTx.taxRate
+        : ((preset && preset.taxRate != null) ? preset.taxRate : '');
+      taxSel = h('input', { class: 'ctl', type: 'number', inputmode: 'decimal', placeholder: '自动计算' });
       taxSel.value = srcTx && srcTx.taxAmount ? srcTx.taxAmount : '';
-      rows.appendChild(row('💴', '税额（元）', taxSel, () => { taxSel.value = ''; }));
+      let taxManual = !!(srcTx && srcTx.taxAmount);
+      const taxHint = h('div', { class: 'muted', style: 'font-size:var(--g-fs-xs);margin-top:4px' }, '');
+      function recalcTax(force) {
+        const rate = Number(taxRateInp.value) || 0;
+        const proj = projects.find((x) => x.id === projSel.value);
+        const contractAmt = proj ? (Number(proj.contractAmount) || 0) : 0;
+        const baseVal = taxBaseSel.value === 'contract' ? contractAmt : (Number(amount.value) || 0);
+        if (rate > 0 && baseVal > 0) {
+          const t = baseVal * rate / (100 + rate);       // 含税价分离
+          if (!taxManual || force) taxSel.value = t.toFixed(2);
+          taxHint.textContent = '基数 ' + M(baseVal) + ' × ' + rate + '% → 税额 ' + M(Math.round(t * 100) / 100)
+            + '（含税价分离：÷(1+税率)）';
+        } else {
+          taxHint.textContent = '填税率后自动算税额；也可直接手填税额';
+        }
+      }
+      taxRateInp.addEventListener('input', () => recalcTax(false));
+      taxBaseSel.addEventListener('change', () => recalcTax(true));
+      amount.addEventListener('input', () => { if (type === 'income') recalcTax(false); });
+      taxSel.addEventListener('input', () => { taxManual = true; });
+      rows.appendChild(row('🧮', '计税基数', taxBaseSel));
+      rows.appendChild(row('📊', '税率（%）', taxRateInp, () => { taxRateInp.value = ''; recalcTax(true); }));
+      rows.appendChild(row('💴', '税额（元）', taxSel, () => { taxSel.value = ''; taxManual = true; },
+        h('button', { class: 'frow-add', title: '按税率重算', onclick: () => { taxManual = false; recalcTax(true); } }, '⟳')));
+      rows.appendChild(taxHint);
       dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
       rows.appendChild(row('🕐', '时间', dtSel));
       noteSel = h('textarea', { class: 'ctl', rows: 2 }, srcTx ? (srcTx.note || '') : ((preset && preset.note) || ''));
@@ -5449,29 +7720,95 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
     fillSubs();
     catSel.addEventListener('change', fillSubs);
     const catWrap = h('div', { class: 'ctl-row' }, [catSel, h('span', { class: 'ctl-sep' }, '＞'), subSel]);
-    rows.appendChild(row('🗂', '分类', catWrap, () => { catSel.value = ''; subSel.value = ''; }));
+    rows.appendChild(row('🗂', '分类', catWrap, () => { catSel.value = ''; subSel.value = ''; }, null, (panel, close) => {
+      addForm(panel, '新增分类（二级可留空，保存后自动选用）', [
+        { key: 'p', label: '一级', placeholder: '如：材料费' },
+        { key: 's', label: '二级', placeholder: '如：瓷砖（留空=只加一级）' }
+      ], async (v) => {
+        if (!v.p.trim()) { toast('请填一级分类'); return false; }
+        await quickCat(v.p.trim(), v.s.trim());
+        if (!Array.from(catSel.options).some((o) => o.value === v.p.trim())) {
+          catSel.appendChild(opt(v.p.trim(), v.p.trim()));
+        }
+        catSel.value = v.p.trim(); fillSubs();
+        if (v.s.trim()) subSel.value = v.s.trim();
+        toast('已新增分类「' + v.p.trim() + (v.s.trim() ? '＞' + v.s.trim() : '') + '」'); close();
+      });
+    }));
 
     acctSel = sel(accOptions(), srcTx ? (srcTx.account || srcTx.method || '') : ((preset && preset.account) || ''));
-    rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }));
+    rows.appendChild(row('💳', '账户', acctSel, () => { acctSel.value = ''; }, null, (panel, close) => {
+      addForm(panel, '新增账户（保存后自动选用）', [
+        { key: 'name', label: '名称', placeholder: '如：建行卡' }
+      ], async (v) => {
+        if (!v.name.trim()) { toast('请填账户名称'); return false; }
+        const a = await quickAccount(v.name.trim());
+        acctSel.appendChild(opt(a.name, a.name)); acctSel.value = a.name;
+        toast('已新增账户「' + a.name + '」'); close();
+      });
+    }));
 
     const members = parties.filter((p) => ['worker', 'manager', 'designer'].indexOf(p.type) >= 0);
     memberSel = sel(partyOptions(members, '选择成员'), srcTx ? (srcTx.memberId || (oldIsMember ? oldParty.id : '')) : ((preset && preset.memberId) || ''));
-    rows.appendChild(row('👷', '成员', memberSel, () => { memberSel.value = ''; }));
+    rows.appendChild(row('👷', '成员', memberSel, () => { memberSel.value = ''; }, null, (panel, close) => {
+      addForm(panel, '新增成员（保存后自动选用）', [
+        { key: 'name', label: '名称', placeholder: '如：老王木工' },
+        { key: 'type', label: '类型', options: [{ v: 'worker', label: '工人' }, { v: 'manager', label: '项目经理' }, { v: 'designer', label: '设计师' }], value: 'worker' },
+        { key: 'phone', label: '电话', placeholder: '11 位（选填）', type: 'tel' }
+      ], async (v) => {
+        if (!v.name.trim()) { toast('请填名称'); return false; }
+        if (v.phone.trim() && !/^\d{11}$/.test(v.phone.trim())) { toast('电话需为 11 位数字'); return false; }
+        const np = await quickParty(v.name.trim(), v.type, v.phone.trim());
+        memberSel.appendChild(opt(np.id, np.name)); memberSel.value = np.id;
+        toast('已新增成员「' + np.name + '」'); close();
+      });
+    }));
 
     const merchs = parties.filter((p) => p.type === 'supplier' || p.type === 'other');
     merchSel = sel(partyOptions(merchs, '选择商家'), srcTx ? (srcTx.merchantId || (oldIsMerch ? oldParty.id : '')) : ((preset && preset.merchantId) || ''));
-    rows.appendChild(row('🏪', '商家', merchSel, () => { merchSel.value = ''; }));
+    rows.appendChild(row('🏪', '商家', merchSel, () => { merchSel.value = ''; }, null, (panel, close) => {
+      addForm(panel, '新增商家（保存后自动选用）', [
+        { key: 'name', label: '名称', placeholder: '如：某某建材' },
+        { key: 'type', label: '类型', options: [{ v: 'supplier', label: '供应商' }, { v: 'other', label: '其他' }], value: 'supplier' },
+        { key: 'phone', label: '电话', placeholder: '11 位（选填）', type: 'tel' }
+      ], async (v) => {
+        if (!v.name.trim()) { toast('请填名称'); return false; }
+        if (v.phone.trim() && !/^\d{11}$/.test(v.phone.trim())) { toast('电话需为 11 位数字'); return false; }
+        const np = await quickParty(v.name.trim(), v.type, v.phone.trim());
+        merchSel.appendChild(opt(np.id, np.name)); merchSel.value = np.id;
+        toast('已新增商家「' + np.name + '」'); close();
+      });
+    }));
 
     newPartySel = h('input', { class: 'ctl', placeholder: '或新建往来单位名称' });
     rows.appendChild(row('➕', '新建单位', newPartySel));
 
     regionSel = sel([h('option', {}, '—')].concat(REGIONS.map((x) => h('option', {}, x))), srcTx ? (srcTx.region || '—') : ((preset && preset.region) || '—'));
     rows.appendChild(row('📍', '施工区域', regionSel));
-    tradeSel = sel([h('option', {}, '—')].concat(TRADES.map((x) => h('option', {}, x))), srcTx ? (srcTx.trade || '—') : ((preset && preset.trade) || '—'));
-    rows.appendChild(row('🛠', '工种', tradeSel));
-    matSel = h('input', { class: 'ctl', placeholder: '如：瓷砖/电线/腻子' });
-    matSel.value = srcTx ? (srcTx.material || '') : ((preset && preset.material) || '');
-    rows.appendChild(row('📦', '材料大类', matSel));
+    tradeSel = sel([h('option', {}, '—')].concat(trades.map((x) => h('option', {}, x))), srcTx ? (srcTx.trade || '—') : ((preset && preset.trade) || '—'));
+    rows.appendChild(row('🛠', '工种', tradeSel, null, null, (panel, close) => {
+      addForm(panel, '新增工种（保存后自动选用）', [
+        { key: 'name', label: '名称', placeholder: '如：防水' }
+      ], async (v) => {
+        if (!v.name.trim()) { toast('请填工种名称'); return false; }
+        const n = await quickTrade(v.name.trim());
+        tradeSel.appendChild(opt(n, n)); tradeSel.value = n;
+        toast('已新增工种「' + n + '」'); close();
+      });
+    }));
+    // 材料大类：改为可维护下拉（累计历史输入），带「＋」新增
+    matSel = sel([h('option', { value: '' }, '（不选）')].concat(materials.map((x) => h('option', { value: x }, x))),
+      srcTx ? (srcTx.material || '') : ((preset && preset.material) || ''));
+    rows.appendChild(row('📦', '材料大类', matSel, () => { matSel.value = ''; }, null, (panel, close) => {
+      addForm(panel, '新增材料大类（保存后自动选用）', [
+        { key: 'name', label: '名称', placeholder: '如：瓷砖 / 电线 / 腻子' }
+      ], async (v) => {
+        if (!v.name.trim()) { toast('请填材料名称'); return false; }
+        const n = await quickMaterial(v.name.trim());
+        matSel.appendChild(opt(n, n)); matSel.value = n;
+        toast('已新增材料大类「' + n + '」'); close();
+      });
+    }));
 
     planSel = sel([h('option', { value: '' }, '不计入计划/未选')]);
     async function fillPlan() {
@@ -5488,7 +7825,30 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
     }
     fillPlan();
     projSel.addEventListener('change', fillPlan);
-    rows.appendChild(row('🧮', '预算计划', planSel, () => { planSel.value = ''; }));
+    rows.appendChild(row('🧮', '预算计划', planSel, () => { planSel.value = ''; }, null, (panel, close) => {
+      const catOpts = [];
+      catTree.forEach((c) => {
+        catOpts.push({ v: c.name, label: c.name });
+        (c.subs || []).forEach((s) => catOpts.push({ v: c.name + '＞' + s.name, label: c.name + '＞' + s.name }));
+      });
+      addForm(panel, '为所选项目新增预算计划项', [
+        { key: 'cat', label: '类别', options: catOpts },
+        { key: 'amount', label: '金额', type: 'number', placeholder: '计划金额（选填）' }
+      ], async (v) => {
+        const pid = projSel.value;
+        if (!pid) { toast('请先选择项目'); return false; }
+        if (!v.cat) { toast('请选择类别'); return false; }
+        const pp = await Projects.get(pid);
+        const item = { id: uid(), cat: v.cat, amount: Number(v.amount) || 0 };
+        pp.planItems = (pp.planItems || []).concat([item]);
+        await Projects.save(pp);
+        const idx = projects.findIndex((x) => x.id === pid);
+        if (idx >= 0) projects[idx] = pp;
+        await fillPlan();
+        planSel.value = item.id;
+        toast('已新增预算计划项「' + v.cat + '」'); close();
+      });
+    }));
 
     dtSel = h('input', { class: 'ctl', type: 'datetime-local', value: dtValue(existingTx) });
     rows.appendChild(row('🕐', '时间', dtSel));
@@ -5537,6 +7897,8 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
       t.subType = subTypeSel.value;
       t.invoiceStatus = invSel.value; t.invoiceType = invTypeSel.value;
       t.taxAmount = Number(taxSel.value) || 0;
+    t.taxRate = taxRateInp ? (Number(taxRateInp.value) || 0) : 0;
+    t.taxBase = taxBaseSel ? taxBaseSel.value : 'amount';
       t.account = acctSel.value; t.method = acctSel.value;
       let cid = memberSel.value;
       if (!cid && srcTx && srcTx.partyId) cid = srcTx.partyId;
@@ -5593,7 +7955,7 @@ async function txForm(presetType, presetProject, existingTx, preset, opts) {
       // 新建：连续记账模式——弹窗不关，清空金额/备注/照片继续记
       savedCount++; savedSum += amt;
       amount.value = ''; if (noteSel) noteSel.value = '';
-      photoFile = null; thumb.style.display = 'none'; keepAttachId = null; fileInp.value = '';
+      photoFile = null; thumb.style.display = 'none'; thumb.removeAttribute('src'); keepAttachId = null;
       if (newPartySel) newPartySel.value = '';
       updateSaved();
       buildActs();
@@ -5683,7 +8045,10 @@ function partyForm(existing) {
   const isEdit = !!existing;
   const f = h('div');
   const name = field(f, '名称', h('input', { value: p.name || '', placeholder: '如：老王木工 / 某某建材' }));
-  const phone = field(f, '电话', h('input', { value: p.phone || '', type: 'tel' }));
+  const phone = field(f, '电话（11 位）',
+    h('input', { value: p.phone || '', type: 'tel', inputmode: 'numeric', maxlength: '11', placeholder: '11 位手机号' }));
+  const phone2 = field(f, '备用号码（选填）',
+    h('input', { value: p.phone2 || '', type: 'tel', inputmode: 'numeric', maxlength: '11', placeholder: '备用联系人电话' }));
   const typeWrap = h('div', { class: 'field' }, [h('label', {}, '类型')]);
   const seg = h('div', { class: 'seg' });
   PARTY_TYPES.forEach((t) => {
@@ -5704,7 +8069,11 @@ function partyForm(existing) {
   field(f, '备注', h('textarea', {}, p.note || ''));
   const save = h('button', { class: 'btn primary', onclick: () => {
     p.name = name.value.trim(); if (!p.name) { toast('请填名称'); return; }
-    p.phone = phone.value.trim();
+    const ph = phone.value.trim(), ph2 = phone2.value.trim();
+    if (ph && !/^\d{11}$/.test(ph)) { toast('电话需为 11 位数字，当前 ' + ph.length + ' 位'); return; }
+    if (ph2 && !/^\d{11}$/.test(ph2)) { toast('备用号码需为 11 位数字，当前 ' + ph2.length + ' 位'); return; }
+    p.phone = ph;
+    p.phone2 = ph2;
     p.note = f.querySelector('textarea').value.trim();
     p.payStatus = p.payStatus || 'unpaid';
     Parties.save(p).then(() => { closeModal(); toast(isEdit ? '已更新' : '已新建'); render(); });
@@ -5729,7 +8098,11 @@ function reminderForm(projectId, existing, preset) {
   const amount = field(f, '金额（元，选填）', h('input', { type: 'number', inputmode: 'decimal', value: r.amount || '' }));
   const save = h('button', { class: 'btn primary', onclick: () => {
     r.title = title.value.trim(); r.dueDate = due.value; r.amount = Number(amount.value) || 0;
-    Reminders.save(r).then(() => { closeModal(); toast(isEdit ? '已更新节点' : '已添加节点'); render(); });
+    // 阶段 B4：节点新增/修改 → 重新排程（改了到期日要立刻反映到系统通知里）
+  Reminders.save(r).then(() => {
+    closeModal(); toast(isEdit ? '已更新节点' : '已添加节点'); render();
+    syncReminderNotifications();
+  });
   } }, isEdit ? '保存修改' : '保存');
   const cancel = h('button', { class: 'btn ghost', onclick: () => closeModal() }, '取消');
   openModal(isEdit ? '编辑收付款节点' : '添加收付款节点', f, [cancel, save]);
@@ -5773,6 +8146,19 @@ function parseCsv(text) {
   if (rows.length && /计划类别|类别|cat/i.test(rows[0][0] || '')) rows.shift();
   return rows;
 }
+/** 下载施工阶段标准表格（两列 CSV：阶段名称,工期天数），供用户参照或填好上传 */
+function downloadStagePlanCsv(fileName, rows) {
+  const csv = '﻿阶段名称,工期天数\n'
+    + (rows || []).map((r) => (r.name || '') + ',' + (Number(r.days) || 0)).join('\n') + '\n';
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('已下载「' + fileName + '」，填好后用「⬆ 上传表格」导入');
+}
+
 function importPlanCsv(file, target) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -5794,15 +8180,20 @@ function importPlanCsv(file, target) {
 }
 
 // ---------- P2：本地通知 + 超支预警引擎 ----------
-let _swReg = null; // undefined=未探测, false=不可用, Promise=注册中
-function ensureSW() {
-  if (_swReg !== null) return Promise.resolve(_swReg === false ? null : _swReg);
-  if (typeof navigator === 'undefined' || !navigator.serviceWorker || !/^https?:/.test(location.protocol)) {
-    _swReg = false;
-    return Promise.resolve(null);
-  }
-  _swReg = navigator.serviceWorker.register('./sw.js').then((reg) => reg).catch(() => false);
-  return _swReg.then((reg) => (reg === false ? null : reg));
+// 弹系统通知：统一走 Bridge。
+//   原生：LocalNotifications（schedule 到点触发，App 没打开也能弹）
+//   Web  ：Service Worker 优先 + 页面内 Notification 兜底（改造前的行为，完全保留）
+async function showNotif(title, body, tag, pid) {
+  return await Bridge.notify.show({ title: title, body: body, tag: tag, pid: pid });
+}
+
+/** 通知前置条件：开关已开 且 已获得权限（原生与 Web 两条口径都覆盖） */
+async function notifReady() {
+  try {
+    const enabled = await Meta.get('notifyEnabled', true);
+    if (!enabled) return false;
+    return (await Bridge.notify.permission()) === 'granted';
+  } catch (e) { return false; }
 }
 
 // 通知去重日志（每设备/每节点/每天最多提醒一次）
@@ -5819,23 +8210,8 @@ function notifMark(key) {
   } catch (e) { /* 隐私模式等场景忽略 */ }
 }
 
-// 弹系统通知：优先走 Service Worker（App 在后台也能弹），无 SW 时退回页面内 Notification
-async function showNotif(title, body, tag, pid) {
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
-  const reg = await ensureSW();
-  try {
-    if (reg) {
-      await reg.showNotification(title, {
-        body: body, tag: tag || 'decor', icon: './icon.svg', badge: './icon.svg',
-        data: { pid: pid || '' }
-      });
-    } else {
-      const n = new Notification(title, { body: body, tag: tag || 'decor', icon: './icon.svg' });
-      n.onclick = () => { try { window.focus(); } catch (e) {} if (pid) location.hash = '#/project/' + pid; };
-    }
-    return true;
-  } catch (e) { return false; }
-}
+// 注：原「SW 优先 + 页面内 Notification」的 showNotif 实现已上移到 Bridge（js/bridge.js 的 notify._web），
+// 本文件只保留上面的转发版本，避免浏览器 API 散落在业务层。
 
 function addDaysStr(d, n) {
   const x = new Date(d + 'T00:00:00');
@@ -5845,11 +8221,14 @@ function addDaysStr(d, n) {
 function daysDiff(a, b) { return Math.round((new Date(a + 'T00:00:00') - new Date(b + 'T00:00:00')) / 864e5); }
 
 // 收付款节点提醒：检查 未完成 && 约定日 <= 今天+提前天数，逐条弹通知（每天每节点一次）
+//
+// 【阶段 B 关键改造】原生环境改走「预排程」：节点一改就把未来通知排好（见 syncReminderNotifications），
+// App 没打开也会到点弹。这里再按天轮询会与预排程重复打扰，故原生环境直接跳过，
+// 只在 Web 形态保留原来的「打开 App 时按天提醒一次」行为。
 async function notifyDueReminders() {
   try {
-    const enabled = await Meta.get('notifyEnabled', true);
-    if (!enabled) return;
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (Bridge.isNative()) return;
+    if (!(await notifReady())) return;
     const [rems, projects] = await Promise.all([Reminders.all(), Projects.all()]);
     const remindDays = Number(await Meta.get('remindDays', 3)) || 0;
     const td = today();
@@ -5903,7 +8282,7 @@ async function budgetWarnings() {
 // 通知超支预警（每天每项目每级别最多一次）
 async function notifyBudgetWarnings() {
   try {
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (!(await notifReady())) return;
     const warns = await budgetWarnings();
     const overs = warns.filter((w) => w.level === 'over');
     if (!overs.length) return;
@@ -5939,7 +8318,7 @@ async function stageWarnings() {
 // 通知工期预警（每天每阶段最多一次）
 async function notifyStageWarnings() {
   try {
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (!(await notifReady())) return;
     const warns = await stageWarnings();
     if (!warns.length) return;
     const td = today();
@@ -5991,7 +8370,7 @@ async function budgetAlertAfterSave(t) {
   } catch (e) { /* ignore */ }
 }
 
-// SW 通知点击 → 聚焦 App 并跳到对应项目
+// SW 通知点击 → 聚焦 App 并跳到对应项目（Web 形态；原生走 Bridge.notify.onClick）
 function listenNotifyNav() {
   if (typeof navigator === 'undefined' || !navigator.serviceWorker) return;
   try {
@@ -6001,10 +8380,137 @@ function listenNotifyNav() {
   } catch (e) { /* ignore */ }
 }
 
+// ---------- 原生能力装配（安卓化阶段 B / C）----------
+
+/** 主题落地：既改 DOM，也把原生状态栏刷成同色（阶段 C3，避免深浅断层） */
+function applyTheme(t) {
+  const name = (t === 'dark') ? 'dark' : 'paper';
+  document.documentElement.dataset.theme = name;
+  Bridge.statusBar.apply(name);
+}
+
+/** 字号档位落地（P1-10 可访问性）：只放大正文类 Token，不动间距与表格排版 */
+function applyFontScale(k) {
+  document.documentElement.dataset.font = (k === 'lg' || k === 'xl') ? k : '';
+}
+
+/**
+ * 收付款节点通知「预排程」：把所有未完成且有到期日的节点排进系统本地通知队列。
+ * 原生的收益是 App 没打开也会到点弹；Web 形态 Bridge 返回 -1，沿用原来的打开时轮询。
+ *
+ * 调用时机：启动 / 授权成功 / 节点增删改 / 项目删除 / 回收站还原 / 回到前台。
+ */
+async function syncReminderNotifications() {
+  if (!Bridge.isNative()) return;
+  try {
+    const enabled = await Meta.get('notifyEnabled', true);
+    if (!enabled) { await Bridge.notify._cancelStale([]); return; }
+    const [rems, projects] = await Promise.all([Reminders.all(), Projects.all()]);
+    const remindDays = Number(await Meta.get('remindDays', 3)) || 0;
+    await Bridge.notify.syncReminders(rems, projects, remindDays);
+  } catch (e) { /* 排程失败绝不能影响记账主流程 */ }
+}
+
+// 物理返回键（阶段 B7）：弹窗 → 上一级 → 首页双击退出。
+// 不处理的话，安卓上按返回键会直接杀掉 App，是体验硬伤。
+let _lastBackAt = 0;
+async function onBackButton() {
+  try {
+    const root = document.getElementById('modal-root');
+    if (root && root.firstChild) { closeModal(); return true; }   // ① 有弹窗先关弹窗
+    const route = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'home';
+    if (route !== 'home') {
+      // ② 二级页显式回到父级：比 history.back() 可预测（hash 路由的 history 可能被外部页面污染）
+      const parentOf = {
+        settings: 'mine', stats: 'mine', forecast: 'mine', compare: 'mine',
+        parties: 'recon', project: 'projects', gantt: 'project'
+      };
+      location.hash = '#/' + (parentOf[route] || 'home');
+      return true;
+    }
+    const now = Date.now();
+    if (now - _lastBackAt < 2000) { await Bridge.back.exitApp(); return true; }  // ③ 双击退出
+    _lastBackAt = now;
+    toast('再按一次退出工账');
+    return true;
+  } catch (e) { return false; }
+}
+
+/** File/Blob → 文本（UTF-8） */
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = () => reject(r.error);
+    r.readAsText(file, 'utf-8');
+  });
+}
+
+/**
+ * 备份导入流程（阶段 C4）：抽成公共函数，供「设置 → 数据安全」与「首次运行向导」复用。
+ * 导入前强制留一份快照，坏备份也能一键回滚。
+ */
+async function importBackupFlow() {
+  const fl = await Bridge.files.pick('.json,application/json');
+  if (!fl) return;
+  let data = null;
+  try { data = JSON.parse(await readFileAsText(fl)); } catch (e) { toast('文件不是有效的备份'); return; }
+  if (!data || !data.stores) { toast('文件不是本应用的备份'); return; }
+  const n = (data.stores.transactions || []).length;
+  const when = String(data.exportedAt || '').slice(0, 10) || '未知日期';
+  const sch = data.schema || data.dbVersion || 1;
+  confirmDialog(
+    '备份时间 ' + when + '（schema ' + sch + '）。导入将【清空并覆盖】当前所有数据，用备份里的 ' + n
+    + ' 笔记账替换。导入前会自动存一份当前数据快照，可在「数据安全」里一键回滚。确定继续？',
+    async () => {
+      try {
+        try { await Snapshots.save('pre-import'); } catch (se) { /* 快照失败不阻断导入 */ }
+        const r = await importAll(data);
+        if (r && r.failed > 0) toast('已恢复 ' + r.imported + ' 条，其中 ' + r.failed + ' 条失败（可在「数据安全」里回滚到导入前快照）');
+        else toast('恢复成功，共 ' + (r ? r.imported : n) + ' 条，即将刷新');
+        setTimeout(() => location.reload(), 900);
+      } catch (err) { toast('恢复失败：' + (err && err.message || err)); }
+    }, '覆盖导入');
+}
+
+/** 首次运行向导（阶段 C5）：只在原生环境弹，避免影响网页版与窄屏探针 */
+function firstRunWizardIfNeeded() {
+  if (!Bridge.isNative()) {
+    toast('已载入演示数据，可在「我的 → 设置 → 数据安全」清空开始记账');
+    render();
+    return;
+  }
+  firstRunWizard({
+    onDemo: () => { toast('已载入演示账本，可随时清空'); render(); },
+    onImport: () => importBackupFlow(),
+    onBlank: async () => {
+      try { await Snapshots.save('pre-import'); } catch (e) { /* 空账本快照失败可忽略 */ }
+      await Demo.reset('blank');
+      toast('已清空，开始记第一笔账');
+      render();
+    }
+  });
+}
+
+/** 原生壳专有装配：返回键、通知排程、通知点击跳转、前台补排程 */
+async function nativeBoot() {
+  if (!Bridge.isNative()) return;
+  // 启动时 Meta.get 是异步的，此刻 Capacitor 未必已就绪；这里再刷一次主题，
+  // 确保状态栏一定被设成主题色（否则深浅主题下会出现「深顶栏 + 浅内容」的断层）
+  const th = await Meta.get('theme', 'paper');
+  applyTheme(th);
+  await Bridge.back.install(onBackButton);
+  await Bridge.notify.onClick((pid) => { location.hash = '#/project/' + pid; });
+  await syncReminderNotifications();
+  // 回到前台补一次排程对账（例如用户在设置里改了提醒天数或节点在外面被改过）
+  await Bridge.lifecycle.onResume(() => { syncReminderNotifications(); });
+}
+
 // ---------- 初始化 ----------
 function init() {
   // 主题：启动最先应用（渲染前），避免闪色。v1.9.0 定调暖纸账本为默认；旧值 light 自动归入暖纸
-  Meta.get('theme', 'paper').then((t) => { document.documentElement.dataset.theme = (t === 'dark') ? 'dark' : 'paper'; }).catch(() => {});
+  Meta.get('theme', 'paper').then((t) => applyTheme(t)).catch(() => {});
+  Meta.get('uiFontScale', 'std').then((k) => applyFontScale(k)).catch(() => {});
   document.querySelectorAll('.tab').forEach((t) => {
     t.addEventListener('click', () => { location.hash = '#/' + t.dataset.route; });
   });
@@ -6013,8 +8519,8 @@ function init() {
   Meta.get('hideMoney', false).then((v) => { state.hideMoney = !!v; render(); }, () => render());
   // 分类统一：启动时把旧「预算计划类别库」并入统一分类树（幂等；恢复旧备份刷新后同样生效）
   migrateCats().then(() => render()).catch(() => {});
-  // P2：启动即注册 SW；首次检查 + 每分钟/回到前台时检查到期节点与超支
-  ensureSW();
+  // P2：Web 形态注册 SW 的消息通道；首次检查 + 每分钟/回到前台时检查超支与工期
+  //     （节点到期提醒在原生已改预排程，见 syncReminderNotifications）
   listenNotifyNav();
   setTimeout(() => { notifyDueReminders(); notifyBudgetWarnings(); notifyStageWarnings(); }, 3000);
   setInterval(() => { if (document.visibilityState === 'visible') { notifyDueReminders(); notifyBudgetWarnings(); notifyStageWarnings(); } }, 60000);
@@ -6026,8 +8532,10 @@ function init() {
   // v2.6.0：首次启动播种演示账本（IndexedDB 分支；内存模式已在 db.js 同步播种）。
   // 播种是异步的，完成后必须补一次渲染，否则首屏会停留在「空账本」直到用户手动切页。
   ensureFirstRun().then((first) => {
-    if (first) { toast('已载入演示数据，可在「我的 → 设置 → 数据安全」清空开始记账'); render(); }
+    if (first) firstRunWizardIfNeeded();
   }).catch(() => {});
+  // 安卓化阶段 B/C：装配返回键、通知排程、通知点击、状态栏
+  nativeBoot().catch(() => {});
 }
 
 init();

@@ -1,6 +1,6 @@
 {
-  "name": "装修记账",
-  "short_name": "装修记账",
+  "name": "工账",
+  "short_name": "工账",
   "description": "装饰装修业务工程项目记账与收付款提醒工具",
   "start_url": "./",
   "scope": "./",

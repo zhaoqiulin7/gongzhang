@@ -2,7 +2,8 @@
 /**
  * scripts/verify.js —— 静态一致性检查（无需浏览器）
  * 用法：node scripts/verify.js
- * 覆盖：SW 缓存与资源清单、构建产物完整性、Token 弃用门禁、演示数据口径断言
+ * 覆盖：SW 缓存与资源清单、构建产物完整性、Token 弃用门禁、演示数据口径断言、
+ *       Capacitor 工程完整性（阶段 1）、品牌一致性
  */
 const fs = require('fs');
 const path = require('path');
@@ -62,10 +63,19 @@ const pkgNote = '每次改动 js/css 后必须递增 sw.js 的 CACHE 版本号�
 if (cache && !/v\d+/.test(cache)) bad('SW CACHE 版本格式异常: ' + cache);
 
 // build.js 的合并顺序必须覆盖全部源文件
+// 顺序不可变：demo → db → util → chart → gantt → bridge → app（gantt 依赖 util/chart 的 Token 约定）
 const build = read('build.js');
-const built = ['demo', 'db', 'util', 'chart', 'app'].filter((n) => build.indexOf("'" + n + ".js'") >= 0);
-if (built.length !== 5) bad('build.js 未包含全部 5 个源文件，实际: ' + built.join(', '));
-else ok('build.js 合并 5 个源文件: ' + built.join(' → '));
+const SRC_ORDER = ['demo', 'db', 'util', 'chart', 'gantt', 'bridge', 'app'];
+const built = SRC_ORDER.filter((n) => build.indexOf("'" + n + ".js'") >= 0);
+if (built.length !== SRC_ORDER.length) bad('build.js 未包含全部 ' + SRC_ORDER.length + ' 个源文件，实际: ' + built.join(', '));
+else ok('build.js 合并 ' + built.length + ' 个源文件: ' + built.join(' → '));
+
+// 合并顺序字面量必须与上面一致（防止有人把 bridge 插到 util 前面）
+const orderMatch = build.match(/const ORDER = \[([^\]]+)\]/);
+const orderList = orderMatch ? (orderMatch[1].match(/'([^']+\.js)'/g) || []).map((s) => s.replace(/'/g, '')) : [];
+if (orderList.join(',') !== SRC_ORDER.map((n) => n + '.js').join(',')) {
+  bad('build.js 的 ORDER 顺序应为 ' + SRC_ORDER.map((n) => n + '.js').join(' → ') + '，实际 ' + orderList.join(' → '));
+} else ok('build.js 加载顺序正确（bridge 在 util 后、app 前）');
 
 // ---------- 3. Token 体系门禁 ----------
 head('[3] Token 体系门禁');
@@ -195,6 +205,150 @@ if (!envSh) {
   if (!buildSh) warn('未找到 scripts/build-android.sh');
   else if (buildSh.indexOf('--no-build-cache') < 0) bad('build-android.sh 缺少 --no-build-cache');
   else ok('build-android.sh 已含 --no-build-cache');
+}
+
+// ---------- 6. Capacitor 工程完整性（阶段 1）----------
+head('[6] Capacitor 工程完整性');
+const json = (p) => JSON.parse(read(p).replace(/^\uFEFF/, ''));
+
+if (!exists('capacitor.config.json')) bad('缺少 capacitor.config.json');
+else {
+  const cfg = json('capacitor.config.json');
+  console.log('    appId=' + cfg.appId + '  appName=' + cfg.appName + '  webDir=' + cfg.webDir);
+  if (!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(cfg.appId || '')) bad('appId 不是合法反向域名: ' + cfg.appId);
+  else ok('appId 合法: ' + cfg.appId);
+  if (!cfg.appName) bad('appName 缺失');
+  if (cfg.webDir !== 'www') bad('webDir 必须为 www（build.js 的输出目录），实际: ' + cfg.webDir);
+  else ok('webDir 指向 www，与 build.js 输出一致');
+}
+
+if (!exists('package.json')) bad('缺少 package.json');
+else {
+  const pkg = json('package.json');
+  const deps = Object.assign({}, pkg.dependencies, pkg.devDependencies);
+  const need = ['@capacitor/core', '@capacitor/cli', '@capacitor/android'];
+  const miss = need.filter((n) => !deps[n]);
+  if (miss.length) bad('package.json 缺少 Capacitor 依赖: ' + miss.join(', '));
+  else ok('Capacitor 依赖齐备: ' + need.map((n) => n + '@' + deps[n]).join(' / '));
+  if (!exists('node_modules/@capacitor/cli')) warn('node_modules 未安装 @capacitor/cli（执行 npm i 后消除）');
+  else ok('@capacitor/cli 已安装到 node_modules');
+}
+
+const wwwIdx = exists('www/index.html') ? read('www/index.html') : '';
+if (!wwwIdx) bad('www/index.html 不存在（先执行 node build.js）');
+else {
+  const srcs = (wwwIdx.match(/<script src="js\/[^"]+"/g) || []).map((s) => s.replace(/.*js\//, '').replace('"', ''));
+  // 与 build.js 的 ORDER 保持同一顺序（bridge 必须在 util 后、app 前）
+  const want = SRC_ORDER.map((n) => n + '.js');
+  if (srcs.join(',') !== want.join(',')) bad('www/index.html 脚本顺序应为 ' + want.join(' → ') + '，实际 ' + srcs.join(' → '));
+  else ok('www/index.html 脚本顺序正确: ' + srcs.join(' → '));
+  if (wwwIdx.indexOf('serviceWorker.register') >= 0) bad('www/index.html 不应注册 SW（原生壳内会缓存住旧资源）');
+  else ok('www/index.html 未注册 SW（原生形态正确）');
+  if (wwwIdx.indexOf('manifest.webmanifest') >= 0) warn('www/index.html 仍引用 manifest（原生形态无意义）');
+  ['css/styles.css', 'js/app.js', 'icon.svg'].forEach((f) => { if (!exists('www/' + f)) bad('www/ 缺少 ' + f); });
+  ok('www/ 资源齐全（css / js / icon.svg）');
+  let dirty = 0;
+  want.forEach((f) => {
+    const t = exists('www/js/' + f) ? read('www/js/' + f) : '';
+    if (t && /^\s*(import|export)\s/m.test(t)) { dirty++; bad('www/js/' + f + ' 残留 import/export（普通脚本会语法错误）'); }
+  });
+  if (!dirty) ok('www/js/*.js 无残留 import/export');
+}
+
+if (!exists('android')) warn('未生成 android/ 工程（执行 npx cap add android）');
+else {
+  ok('android/ 工程已生成');
+  if (!exists('android/gradlew') && !exists('android/gradlew.bat')) bad('android/gradlew 缺失');
+  else ok('gradlew 存在');
+  if (!exists('android/app/src/main/AndroidManifest.xml')) bad('AndroidManifest.xml 缺失');
+  else ok('AndroidManifest.xml 存在');
+  const dens = ['mipmap-mdpi', 'mipmap-hdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi'];
+  const missIc = dens.filter((d) => !exists('android/app/src/main/res/' + d + '/ic_launcher.png'));
+  if (missIc.length) bad('缺少图标密度: ' + missIc.join(', '));
+  else ok('图标五档密度齐全（mdpi → xxxhdpi）');
+  const cfgName = exists('capacitor.config.json') ? json('capacitor.config.json').appName : '';
+  const strings = exists('android/app/src/main/res/values/strings.xml') ? read('android/app/src/main/res/values/strings.xml') : '';
+  if (strings && cfgName && strings.indexOf('>' + cfgName + '<') < 0) bad('strings.xml 的 app_name 与 capacitor appName 不一致（应为 ' + cfgName + '）');
+  else if (strings) ok('Android 应用名与配置一致: ' + cfgName);
+  const colors = exists('android/app/src/main/res/values/colors.xml') ? read('android/app/src/main/res/values/colors.xml') : '';
+  if (!colors) warn('缺少 res/values/colors.xml（状态栏主题色未定制）');
+  else if (colors.indexOf('#1f6f54') < 0) warn('colors.xml 主色不是 --primary #1f6f54');
+  else ok('主题色已对齐设计 Token（#1f6f54）');
+}
+
+// ---------- 7. 品牌一致性 ----------
+head('[7] 品牌一致性');
+const BRAND = exists('capacitor.config.json') ? json('capacitor.config.json').appName : '';
+const titleOf = (s) => { const m = s.match(/<title>([^<]+)<\/title>/); return m ? m[1] : ''; };
+if (BRAND) {
+  const t1 = exists('index.html') ? titleOf(read('index.html')) : '';
+  const t2 = exists('www/index.html') ? titleOf(read('www/index.html')) : '';
+  const mf = exists('manifest.webmanifest') ? json('manifest.webmanifest') : null;
+  let good = true;
+  [[t1, 'index.html <title>'], [t2, 'www/index.html <title>'], [mf && mf.name, 'manifest.name']].forEach((it) => {
+    if (it[0] && it[0] !== BRAND) { good = false; bad(it[1] + ' = ' + it[0] + '，与 appName「' + BRAND + '」不一致'); }
+  });
+  if (good) ok('品牌名一致：' + BRAND + '（index.html / www/index.html / manifest）');
+}
+
+// ---------- 8. 桥接层与原生能力（阶段 B / C）----------
+head('[8] 桥接层与原生能力');
+
+const bridgeSrc = exists('js/bridge.js') ? read('js/bridge.js') : '';
+if (!bridgeSrc) bad('缺少 js/bridge.js（能力抽象层，阶段 B 核心）');
+else {
+  ok('js/bridge.js 存在');
+  // 双实现完备性：每个对外的能力方法都必须存在（bridge 里是嵌套对象字面量，
+  // 不会写出 notify.permission 这种全路径，故只匹配「方法名(」）
+  const needApi = ['permission', 'request', 'show', 'schedule', 'cancel', 'syncReminders',
+    'image', 'pick', 'saveAndShare', 'text', 'file', 'write', 'install', 'exitApp', 'apply'];
+  const missApi = needApi.filter((m) => !new RegExp('(async\\s+)?' + m + '\\s*\\(').test(bridgeSrc));
+  if (missApi.length) bad('bridge.js 缺少能力: ' + missApi.join(', '));
+  else ok('bridge.js 能力齐备（' + needApi.length + ' 项：通知/相机/文件/分享/剪贴板/返回键/状态栏）');
+
+  // 每个能力都必须走 isNative/nativePlugin 判分支，否则 Web 形态会炸
+  const nativeBranch = (bridgeSrc.match(/nativePlugin\(/g) || []).length;
+  if (nativeBranch < 6) bad('bridge.js 的原生分支调用过少（' + nativeBranch + ' 处），疑似漏接插件');
+  else ok('bridge.js 原生分支调用 ' + nativeBranch + ' 处');
+}
+
+// app.js 不允许再直接用浏览器专有 API（必须走 Bridge）
+const appSrc = exists('js/app.js') ? read('js/app.js') : '';
+if (appSrc) {
+  const leak = [];
+  // 说明：bridge.js 内部实现允许出现这些 API，这里是检查业务层 app.js
+  if (/navigator\.share/.test(appSrc)) leak.push('navigator.share');
+  if (/navigator\.clipboard/.test(appSrc)) leak.push('navigator.clipboard');
+  if (/execCommand\s*\(/.test(appSrc)) leak.push('execCommand');
+  if (/new Notification\s*\(/.test(appSrc)) leak.push('new Notification');
+  if (leak.length) bad('app.js 仍在直接使用浏览器 API（应改走 Bridge）: ' + leak.join(', '));
+  else ok('app.js 未直接使用浏览器专有 API（已全部收敛到 Bridge）');
+}
+
+// 插件：package.json 声明 ↔ 原生插件清单一致
+const pkg = exists('package.json') ? json('package.json') : {};
+const declared = Object.keys(pkg.dependencies || {}).filter((d) => /^@capacitor\//.test(d) && d !== '@capacitor/core');
+const pluginJson = exists('android/app/src/main/assets/capacitor.plugins.json') ? json('android/app/src/main/assets/capacitor.plugins.json') : null;
+if (!declared.length) bad('package.json 未声明任何 Capacitor 插件');
+else ok('已声明插件: ' + declared.join(', '));
+if (pluginJson === null) warn('capacitor.plugins.json 不存在（先执行 npx cap sync android）');
+else if (pluginJson.length !== declared.length) {
+  bad('原生插件清单 ' + pluginJson.length + ' 个，与 package.json 声明的 ' + declared.length + ' 个不一致（执行 npx cap sync android）');
+} else ok('原生插件清单与依赖声明一致（' + pluginJson.length + ' 个）');
+
+// AndroidManifest 权限最小化 + 必须项
+const man = exists('android/app/src/main/AndroidManifest.xml') ? read('android/app/src/main/AndroidManifest.xml') : '';
+if (man) {
+  const perms = (man.match(/<uses-permission[^>]*android:name="([^"]+)"/g) || [])
+    .map((s) => (s.match(/android:name="([^"]+)"/) || [])[1]);
+  const needPerm = ['android.permission.POST_NOTIFICATIONS', 'android.permission.CAMERA', 'android.permission.READ_MEDIA_IMAGES'];
+  const missPerm = needPerm.filter((p) => perms.indexOf(p) < 0);
+  if (missPerm.length) bad('Manifest 缺少权限: ' + missPerm.join(', '));
+  else ok('Manifest 权限齐备: ' + perms.join(', '));
+  // 隐私承诺：不申请联网/定位/通讯录
+  const forbidden = perms.filter((p) => /ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_CONTACTS|RECORD_AUDIO|READ_PHONE_STATE/.test(p));
+  if (forbidden.length) bad('Manifest 申请了与记账无关的权限（违反最小化原则）: ' + forbidden.join(', '));
+  else ok('未申请与记账无关的权限（权限最小化）');
 }
 
 // ---------- 汇总 ----------

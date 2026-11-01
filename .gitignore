@@ -24,6 +24,29 @@ out/
 .cache/
 
 # -------------------------------------
+# 本项目构建产物（build.js 输出）
+# -------------------------------------
+www/
+_combined.js
+
+# -------------------------------------
+# Android / Capacitor（android/ 工程本身需入库，只忽略产物与机密）
+# -------------------------------------
+android/app/build/
+android/build/
+android/.gradle/
+android/captures/
+android/local.properties
+android/keystore.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+!android/gradle/wrapper/gradle-wrapper.jar
+# build-android.sh 的错误输出（*.log 已被上面「日志」段忽略）
+build-apk.err
+
+# -------------------------------------
 # 测试与覆盖率
 # -------------------------------------
 coverage/
